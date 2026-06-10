@@ -2,6 +2,10 @@
 
 This file provides session-start context for Claude Code. Read it before making any changes.
 
+## AI behavior rules
+
+- **Always commit after finishing any modification.** Include a detailed commit message: what files changed, what was added/fixed/refactored, and why. Use the imperative mood (e.g., "Fix …", "Add …", "Refactor …").
+
 ## What this project is
 
 A portable C++17 desktop automation tool (Windows/Linux/macOS). Users define "workflows" of
