@@ -343,11 +343,11 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             dm = std::max(0, dm); dr = std::max(0, dr);
         };
 
-        // Helper: XY fields with "Pick" button
+        // Helper: XY fields then Pick button on next line
         auto xyPick = [this](int& x, int& y, PickStage stage) {
-            ImGui::InputInt("X", &x); ImGui::SameLine();
-            ImGui::InputInt("Y", &y); ImGui::SameLine();
-            if (ImGui::Button("Pick##xy")) {
+            ImGui::InputInt("X", &x);
+            ImGui::InputInt("Y", &y);
+            if (ImGui::Button("Pick position##xy")) {
                 m_pickStage = stage;
                 ImGui::CloseCurrentPopup();
             }
@@ -368,15 +368,15 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             posMode(v.pos_mode);
 
-            ImGui::InputInt("From X", &v.from_x); ImGui::SameLine();
-            ImGui::InputInt("From Y", &v.from_y); ImGui::SameLine();
+            ImGui::InputInt("From X", &v.from_x);
+            ImGui::InputInt("From Y", &v.from_y);
             if (ImGui::Button("Pick start##dfs")) {
                 m_pickStage = PickStage::DragFrom;
                 ImGui::CloseCurrentPopup();
             }
 
-            ImGui::InputInt("To X", &v.to_x); ImGui::SameLine();
-            ImGui::InputInt("To Y", &v.to_y); ImGui::SameLine();
+            ImGui::InputInt("To X", &v.to_x);
+            ImGui::InputInt("To Y", &v.to_y);
             if (ImGui::Button("Pick end##dfe")) {
                 m_pickStage = PickStage::DragTo;
                 ImGui::CloseCurrentPopup();
@@ -392,11 +392,10 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             xyPick(v.x, v.y, PickStage::Single);
             ImGui::InputInt("Delta X", &v.delta_x);
 
-            // Scroll delta Y with capture button
             if (m_scrollCapture) {
                 m_scrollAccum += ImGui::GetIO().MouseWheel;
                 ImGui::TextColored(ImVec4(1,0.9f,0.3f,1),
-                    "Scroll now... delta: %d (%.1f)", (int)m_scrollAccum, m_scrollAccum);
+                    "Scroll now... delta Y: %d", (int)m_scrollAccum);
                 if (ImGui::Button("Done##sc") || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
                     v.delta_y       = (int)m_scrollAccum;
                     m_scrollCapture = false;
@@ -409,8 +408,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 }
             } else {
                 ImGui::InputInt("Delta Y", &v.delta_y);
-                ImGui::SameLine();
-                if (ImGui::Button("Capture##sc")) {
+                if (ImGui::Button("Capture scroll##sc")) {
                     m_scrollCapture = true;
                     m_scrollAccum   = 0.f;
                 }
@@ -450,11 +448,9 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             } else {
                 static char keyBuf[64]{};
                 strncpy(keyBuf, v.key.c_str(), sizeof(keyBuf)-1);
-                ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("Key##kp", keyBuf, sizeof(keyBuf))) v.key = keyBuf;
-                ImGui::SameLine();
-                if (ImGui::Button("Capture##kp")) m_keyCaptureActive = true;
                 ImGui::TextDisabled("e.g. space, f1, a, enter");
+                if (ImGui::Button("Capture key##kp")) m_keyCaptureActive = true;
 
                 // Show current modifiers
                 ImGui::Text("Modifiers:");
