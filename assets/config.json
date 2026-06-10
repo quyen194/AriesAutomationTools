@@ -1,0 +1,44 @@
+{
+  "global_hotkey": "F9",
+  "workflows": [
+    {
+      "id": "a1b2c3d4-0000-0000-0000-000000000001",
+      "name": "AFK Example",
+      "enabled": false,
+      "repeat_interval_ms": 30000,
+      "repeat_count": 0,
+      "smart_detection": true,
+      "smart_detection_idle_ms": 3000,
+      "window": { "type": "global" },
+      "trigger": { "type": "manual" },
+      "activities": [
+        {
+          "id": "a1b2c3d4-0000-0000-0000-000000000010",
+          "enabled": true,
+          "type": "mouse_move",
+          "position_mode": "absolute",
+          "x": 960,
+          "y": 540,
+          "delay_after_ms": 200,
+          "delay_random_range_ms": 50
+        },
+        {
+          "id": "a1b2c3d4-0000-0000-0000-000000000011",
+          "enabled": true,
+          "type": "key_press",
+          "key": "space",
+          "modifiers": [],
+          "delay_after_ms": 100,
+          "delay_random_range_ms": 20
+        },
+        {
+          "id": "a1b2c3d4-0000-0000-0000-000000000012",
+          "enabled": true,
+          "type": "wait",
+          "duration_ms": 1000,
+          "random_range_ms": 200
+        }
+      ]
+    }
+  ]
+}

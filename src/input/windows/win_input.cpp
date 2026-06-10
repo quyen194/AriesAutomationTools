@@ -1,5 +1,7 @@
 #include "input/input_simulator.hpp"
 #include "input/key_map.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <thread>
 #include <chrono>

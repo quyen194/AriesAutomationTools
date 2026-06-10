@@ -1,0 +1,91 @@
+#include "ui/app_ui.hpp"
+#include "config/config_manager.hpp"
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_sdlrenderer2.h"
+#include <SDL.h>
+#include <cstdio>
+
+int main(int /*argc*/, char** /*argv*/) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+        fprintf(stderr, "SDL_Init error: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    SDL_WindowFlags wflags = (SDL_WindowFlags)(
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window* window = SDL_CreateWindow(
+        "Aries Automation Tools",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        1100, 680, wflags);
+    if (!window) {
+        fprintf(stderr, "SDL_CreateWindow error: %s\n", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Renderer* renderer = SDL_CreateRenderer(
+        window, -1,
+        SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
+    if (!renderer) {
+        fprintf(stderr, "SDL_CreateRenderer error: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // Style
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding   = 4.0f;
+    style.FrameRounding    = 3.0f;
+    style.ScrollbarRounding= 3.0f;
+    style.GrabRounding     = 3.0f;
+
+    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
+
+    AppUI app;
+    app.Init(ConfigManager::DefaultPath());
+
+    bool running = true;
+    while (running) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL2_ProcessEvent(&ev);
+            if (ev.type == SDL_QUIT) running = false;
+            if (ev.type == SDL_WINDOWEVENT &&
+                ev.window.event == SDL_WINDOWEVENT_CLOSE &&
+                ev.window.windowID == SDL_GetWindowID(window))
+                running = false;
+        }
+
+        ImGui_ImplSDLRenderer2_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+
+        app.Render();
+
+        ImGui::Render();
+        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        SDL_RenderClear(renderer);
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
+    }
+
+    app.Shutdown();
+
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    return 0;
+}

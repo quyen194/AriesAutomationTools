@@ -1,0 +1,45 @@
+# Build output
+build/
+out/
+*.exe
+*.ilk
+*.pdb
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.aps
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

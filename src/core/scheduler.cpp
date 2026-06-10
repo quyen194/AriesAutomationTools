@@ -1,6 +1,7 @@
 #include "scheduler.hpp"
 #include "input/input_simulator.hpp"
 #include "window/pixel_checker.hpp"
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 #include <random>

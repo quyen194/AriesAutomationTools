@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_SHARED_LIBS OFF)
 
+# Force UTF-8 source/execution charset on MSVC (fixes codepage 932 issues)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 include(cmake/CPM.cmake)
 
 # ── Dependencies ──────────────────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 #include "window/window_finder.hpp"
 #include "window/pixel_checker.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <string>
 #include <algorithm>

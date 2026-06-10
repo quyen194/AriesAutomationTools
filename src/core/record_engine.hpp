@@ -4,6 +4,13 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <string>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#endif
 
 struct RecordedEvent {
     enum class Type { MouseMove, MouseClick, MouseScroll, KeyPress } type;
@@ -39,6 +46,8 @@ private:
     std::vector<RecordedEvent> m_events;
     std::atomic<bool>          m_recording{false};
     uint64_t                   m_ignoreHandle = 0;
+    int                        m_lastMoveX = -9999;
+    int                        m_lastMoveY = -9999;
 
     void InstallHooks();
     void RemoveHooks();
