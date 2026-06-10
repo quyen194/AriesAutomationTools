@@ -67,18 +67,35 @@ int main(int /*argc*/, char** /*argv*/) {
     ImGui_ImplSDLRenderer2_Init(renderer);
 
     AppUI app;
-    app.Init(ConfigManager::DefaultPath());
+    app.Init(ConfigManager::DefaultPath(), window);
 
     bool running = true;
     while (running) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL2_ProcessEvent(&ev);
-            if (ev.type == SDL_QUIT) running = false;
-            if (ev.type == SDL_WINDOWEVENT &&
-                ev.window.event == SDL_WINDOWEVENT_CLOSE &&
-                ev.window.windowID == SDL_GetWindowID(window))
-                running = false;
+
+            if (ev.type == SDL_QUIT) {
+                if (!app.RequestQuit()) {
+                    // Quit dialog is shown — don't exit yet
+                }
+            }
+            if (ev.type == SDL_WINDOWEVENT) {
+                if (ev.window.event == SDL_WINDOWEVENT_CLOSE &&
+                    ev.window.windowID == SDL_GetWindowID(window)) {
+                    // X button: respect "close to tray" setting
+                    if (!app.RequestQuit()) {
+                        // Either showing dialog or minimizing to tray — don't quit
+                    }
+                } else if (ev.window.event == SDL_WINDOWEVENT_MINIMIZED) {
+                    app.OnWindowMinimized();
+                }
+            }
+        }
+
+        if (app.ShouldQuit()) {
+            running = false;
+            break;
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();

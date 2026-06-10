@@ -1,6 +1,7 @@
 #include "app_ui.hpp"
 #include "imgui.h"
 #include <SDL.h>
+#include "icon_data.hpp"
 #include <algorithm>
 #include <sstream>
 #include <random>
@@ -127,8 +128,9 @@ AppUI::AppUI() {
     };
 }
 
-void AppUI::Init(const std::string& config_path) {
+void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     m_configPath = config_path;
+    m_sdlWindow  = sdlWindow;
     try {
         m_config = ConfigManager::Load(config_path);
     } catch (...) {}
@@ -148,12 +150,103 @@ void AppUI::Init(const std::string& config_path) {
                      [this](const std::string& id) { m_engine.StartWorkflow(id); });
 
     if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
+
+    m_tray.Init(kIconPixels, 32, 32);
+    UpdateTrayWorkflows();
 }
 
 void AppUI::Shutdown() {
+    m_tray.Shutdown();
     m_triggers.Stop();
     m_engine.Shutdown();
     if (m_dirty) SaveConfig();
+}
+
+bool AppUI::RequestQuit() {
+    // If "close to tray" is enabled, minimize to tray instead of quitting
+    if (m_config.close_to_tray) {
+        MinimizeToTray();
+        return false;
+    }
+    if (!m_dirty) {
+        m_shouldQuit = true;
+        return true;
+    }
+    // Show confirmation modal next frame
+    m_quitRequested = true;
+    return false;
+}
+
+void AppUI::OnWindowMinimized() {
+    if (m_config.close_to_tray) MinimizeToTray();
+}
+
+void AppUI::MinimizeToTray() {
+    if (m_sdlWindow) SDL_HideWindow(m_sdlWindow);
+    m_windowVisible = false;
+}
+
+void AppUI::RestoreFromTray() {
+    if (m_sdlWindow) {
+        SDL_ShowWindow(m_sdlWindow);
+        SDL_RaiseWindow(m_sdlWindow);
+    }
+    m_windowVisible = true;
+}
+
+void AppUI::UpdateTrayWorkflows() {
+    std::vector<TrayWorkflowDesc> descs;
+    descs.reserve(m_config.workflows.size());
+    for (auto& wf : m_config.workflows) {
+        TrayWorkflowDesc d;
+        d.id      = wf.id;
+        d.name    = wf.name;
+        d.running = m_engine.IsRunning(wf.id);
+        d.paused  = m_engine.IsPaused(wf.id);
+        descs.push_back(d);
+    }
+    m_tray.UpdateWorkflows(descs);
+}
+
+void AppUI::PollTrayActions() {
+    UpdateTrayWorkflows();
+    std::vector<TrayPendingAction> actions;
+    m_tray.Poll(actions);
+    for (auto& a : actions) {
+        switch (a.action) {
+            case TrayAction::ShowWindow:
+                if (m_windowVisible) MinimizeToTray();
+                else                  RestoreFromTray();
+                break;
+            case TrayAction::Exit:
+                RequestQuit();
+                break;
+            case TrayAction::StartAll:
+                m_engine.StartAll();
+                break;
+            case TrayAction::StopAll:
+                m_engine.StopAll();
+                break;
+            case TrayAction::PauseAll:
+                m_engine.PauseAll();
+                break;
+            case TrayAction::ResumeAll:
+                m_engine.ResumeAll();
+                break;
+            case TrayAction::StartWorkflow:
+                m_engine.StartWorkflow(a.wfId);
+                break;
+            case TrayAction::StopWorkflow:
+                m_engine.StopWorkflow(a.wfId);
+                break;
+            case TrayAction::PauseWorkflow:
+                m_engine.PauseWorkflow(a.wfId);
+                break;
+            case TrayAction::ResumeWorkflow:
+                m_engine.ResumeWorkflow(a.wfId);
+                break;
+        }
+    }
 }
 
 void AppUI::SaveConfig() {
@@ -196,6 +289,7 @@ void AppUI::LoadConfig(const std::string& path) {
 
 void AppUI::Render() {
     m_engine.PollHotkeys();
+    PollTrayActions();
 
     // Recording hotkey: open window when idle, stop when recording
     if (!m_recOverlay.IsHotkeyCapturing() && IsHotkeyPressed(m_config.record_hotkey)) {
@@ -219,6 +313,9 @@ void AppUI::Render() {
 
     RenderMenuBar();
     RenderTopBar();
+
+    // Quit confirmation modal
+    RenderQuitConfirmModal();
 
     // Workflow delete confirmation modal
     if (m_pendingConfirmWf) {
@@ -271,8 +368,35 @@ void AppUI::Render() {
     m_recOverlay.Render(m_recorder);
 }
 
+void AppUI::RenderQuitConfirmModal() {
+    if (m_quitRequested) {
+        ImGui::OpenPopup("Unsaved Changes##quit");
+        m_quitRequested = false;
+    }
+    if (ImGui::BeginPopupModal("Unsaved Changes##quit", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("You have unsaved changes. What would you like to do?");
+        ImGui::Separator();
+        if (ImGui::Button("Save & Exit", ImVec2(110, 0))) {
+            SaveConfig();
+            m_shouldQuit = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard & Exit", ImVec2(110, 0))) {
+            m_shouldQuit = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(80, 0)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 void AppUI::RenderMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
+
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Save Config", "Ctrl+S")) SaveConfig();
         ImGui::BeginDisabled(!m_dirty);
@@ -280,13 +404,52 @@ void AppUI::RenderMenuBar() {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered() && !m_dirty)
             ImGui::SetTooltip("No unsaved changes");
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Minimize to Tray"))
+            MinimizeToTray();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hide the main window; the app keeps running in the system tray");
+
+        if (ImGui::MenuItem("Close to Tray", nullptr, m_config.close_to_tray)) {
+            m_config.close_to_tray = !m_config.close_to_tray;
+            m_dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("When checked, clicking the window's X button minimizes to tray\n"
+                              "instead of prompting to exit");
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit"))
+            RequestQuit();
+
         ImGui::EndMenu();
     }
+
+    if (ImGui::BeginMenu("Workflows")) {
+        if (ImGui::MenuItem("Start All"))  m_engine.StartAll();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
+
+        if (ImGui::MenuItem("Stop All"))   m_engine.StopAll();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Pause All"))  m_engine.PauseAll();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause all currently running workflows");
+
+        if (ImGui::MenuItem("Resume All")) m_engine.ResumeAll();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resume all paused workflows");
+
+        ImGui::EndMenu();
+    }
+
     ImGui::EndMenuBar();
 }
 
 void AppUI::RenderTopBar() {
     bool anyRunning = m_engine.AnyRunning();
+    bool anyPaused  = m_engine.AnyPaused();
 
     if (ImGui::Button(">> Start All")) m_engine.StartAll();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
@@ -294,10 +457,30 @@ void AppUI::RenderTopBar() {
     if (ImGui::Button("[Stop All]"))  m_engine.StopAll();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
     ImGui::SameLine();
+
+    ImGui::BeginDisabled(!anyRunning || anyPaused);
+    if (ImGui::Button("|| Pause All")) m_engine.PauseAll();
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Pause all running workflows (they stay alive but stop executing)");
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(!anyPaused);
+    if (ImGui::Button("> Resume All")) m_engine.ResumeAll();
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Resume all paused workflows");
+    ImGui::SameLine();
+
     ImGui::Separator(); ImGui::SameLine();
 
     // Global hotkey config
     ImGui::Text("Hotkey:"); ImGui::SameLine();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Global hotkey:\n"
+                          "- If workflows are running: toggle pause/resume all\n"
+                          "- If nothing is running: start all enabled workflows\n"
+                          "Press 'Capture' to rebind. Default: f9");
     if (m_hotkeyCapture) {
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
         ImGui::SameLine();
@@ -354,10 +537,21 @@ void AppUI::RenderTopBar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload config from disk, discarding all changes");
     }
 
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 120);
-    ImGui::PushStyleColor(ImGuiCol_Text,
-        anyRunning ? ImVec4(0.2f,0.9f,0.2f,1.f) : ImVec4(0.5f,0.5f,0.5f,1.f));
-    ImGui::Text("Status: %s", anyRunning ? "RUNNING" : "IDLE");
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 140);
+    const char* statusText;
+    ImVec4 statusColor;
+    if (anyRunning && anyPaused) {
+        statusText  = "PAUSED";
+        statusColor = ImVec4(1.f, 0.7f, 0.f, 1.f);
+    } else if (anyRunning) {
+        statusText  = "RUNNING";
+        statusColor = ImVec4(0.2f, 0.9f, 0.2f, 1.f);
+    } else {
+        statusText  = "IDLE";
+        statusColor = ImVec4(0.5f, 0.5f, 0.5f, 1.f);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, statusColor);
+    ImGui::Text("Status: %s", statusText);
     ImGui::PopStyleColor();
 
     ImGui::Separator();
@@ -374,6 +568,7 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable or disable this workflow");
 
     bool running = m_engine.IsRunning(wf.id);
+    bool paused  = m_engine.IsPaused(wf.id);
     ImGui::SameLine();
     if (!running) {
         if (ImGui::Button(">> Start")) m_engine.StartWorkflow(wf.id);
@@ -383,6 +578,17 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         if (ImGui::Button("[Stop]"))  m_engine.StopWorkflow(wf.id);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop this workflow");
         ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (!paused) {
+            if (ImGui::Button("||")) m_engine.PauseWorkflow(wf.id);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause this workflow");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f,0.5f,0.8f,1.f));
+            ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(1.f,1.f,0.3f,1.f));
+            if (ImGui::Button(">")) m_engine.ResumeWorkflow(wf.id);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resume this paused workflow");
+            ImGui::PopStyleColor(2);
+        }
     }
 
     ImGui::Separator();

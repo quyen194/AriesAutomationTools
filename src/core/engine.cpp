@@ -87,6 +87,37 @@ void WorkflowEngine::StopAll() {
     for (auto& s : m_schedulers) s->Stop();
 }
 
+void WorkflowEngine::PauseWorkflow(const std::string& id) {
+    auto* s = FindScheduler(id);
+    if (s && s->IsRunning()) s->SetUserPaused(true);
+}
+
+void WorkflowEngine::ResumeWorkflow(const std::string& id) {
+    auto* s = FindScheduler(id);
+    if (s) s->SetUserPaused(false);
+}
+
+void WorkflowEngine::PauseAll() {
+    m_globalPaused = true;
+    for (auto& s : m_schedulers) if (s->IsRunning()) s->SetUserPaused(true);
+}
+
+void WorkflowEngine::ResumeAll() {
+    m_globalPaused = false;
+    for (auto& s : m_schedulers) s->SetUserPaused(false);
+}
+
+bool WorkflowEngine::IsPaused(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->IsUserPaused();
+    return false;
+}
+
+bool WorkflowEngine::AnyPaused() const {
+    for (auto& s : m_schedulers) if (s->IsUserPaused()) return true;
+    return false;
+}
+
 bool WorkflowEngine::IsRunning(const std::string& id) const {
     for (size_t i = 0; i < m_workflows.size(); ++i)
         if (m_workflows[i].id == id) return m_schedulers[i]->IsRunning();
@@ -109,9 +140,19 @@ void WorkflowEngine::SetGlobalHotkey(const std::string& key_name) {
     if (!m_hotkeyName.empty()) m_hotkey->Unregister(m_hotkeyName);
     m_hotkeyName = key_name;
     m_hotkey->Register(key_name, [this]() {
-        bool paused = !m_globalPaused.load();
-        m_globalPaused = paused;
-        for (auto& s : m_schedulers) s->SetSuspended(paused);
+        if (AnyRunning()) {
+            // Toggle pause/resume all running workflows
+            bool shouldPause = !AnyPaused();
+            m_globalPaused = shouldPause;
+            for (auto& s : m_schedulers)
+                if (s->IsRunning()) s->SetUserPaused(shouldPause);
+        } else {
+            // Nothing running — start all enabled workflows
+            m_globalPaused = false;
+            for (size_t i = 0; i < m_workflows.size(); ++i)
+                if (m_workflows[i].enabled && !m_schedulers[i]->IsRunning())
+                    m_schedulers[i]->Start();
+        }
     });
 }
 

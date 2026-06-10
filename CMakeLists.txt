@@ -44,6 +44,7 @@ if(WIN32)
         src/monitor/windows/win_monitor.cpp
         src/window/windows/win_window.cpp
         src/hotkey/windows/win_hotkey.cpp
+        src/ui/tray_manager_win.cpp
     )
 elseif(APPLE)
     set(PLATFORM_SOURCES
@@ -51,6 +52,7 @@ elseif(APPLE)
         src/monitor/macos/macos_monitor.cpp
         src/window/macos/macos_window.cpp
         src/hotkey/macos/macos_hotkey.cpp
+        src/ui/tray_manager_stub.cpp
     )
 else()
     set(PLATFORM_SOURCES
@@ -58,6 +60,7 @@ else()
         src/monitor/linux/linux_monitor.cpp
         src/window/linux/linux_window.cpp
         src/hotkey/linux/linux_hotkey.cpp
+        src/ui/tray_manager_stub.cpp
     )
 endif()
 

@@ -29,8 +29,15 @@ public:
     void StopWorkflow(const std::string& id);
     void StartAll();
     void StopAll();
+    void PauseWorkflow(const std::string& id);
+    void ResumeWorkflow(const std::string& id);
+    void PauseAll();
+    void ResumeAll();
     bool IsRunning(const std::string& id) const;
     bool AnyRunning() const;
+    bool IsPaused(const std::string& id) const;
+    bool AnyPaused() const;
+    bool IsGloballyPaused() const { return m_globalPaused.load(); }
 
     // Global hotkey toggle
     void SetGlobalHotkey(const std::string& key_name);

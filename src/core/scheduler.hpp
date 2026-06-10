@@ -22,6 +22,10 @@ public:
     void SetSuspended(bool s) { m_suspended.store(s); }
     bool IsSuspended()  const { return m_suspended.load(); }
 
+    // User-initiated pause (distinct from smart-detection suspend)
+    void SetUserPaused(bool p) { m_userPaused.store(p); }
+    bool IsUserPaused()  const { return m_userPaused.load(); }
+
     // Milliseconds since epoch when Start() was last called (0 if never started)
     int64_t GetStartTimeMs() const { return m_startTimeMs.load(); }
 
@@ -39,6 +43,7 @@ private:
     std::atomic<bool>    m_stopFlag{false};
     std::atomic<bool>    m_running{false};
     std::atomic<bool>    m_suspended{false};
+    std::atomic<bool>    m_userPaused{false};
     std::atomic<int>     m_currentIndex{-1};
     std::atomic<int64_t> m_startTimeMs{0};
 };

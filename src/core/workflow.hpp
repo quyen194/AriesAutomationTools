@@ -141,7 +141,8 @@ struct Workflow {
 // ── App config (top-level) ────────────────────────────────────────────────────
 
 struct AppConfig {
-    std::string global_hotkey  = "F9";
+    std::string global_hotkey  = "f9";
     std::string record_hotkey  = "";   // hotkey to start/stop recording (empty = disabled)
+    bool        close_to_tray  = false;
     std::vector<Workflow> workflows;
 };

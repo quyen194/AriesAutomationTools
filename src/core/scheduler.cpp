@@ -43,8 +43,8 @@ void Scheduler::SleepInterruptible(int ms) {
     while (ms > 0 && !IsStopped()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(std::min(ms, kSlice)));
         ms -= kSlice;
-        // Spin-wait while suspended (still check stop flag)
-        while (m_suspended.load() && !IsStopped())
+        // Spin-wait while suspended or user-paused (still check stop flag)
+        while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
@@ -72,8 +72,8 @@ void Scheduler::Run() {
             if (!acts[i].enabled) continue;
             m_currentIndex = i;
 
-            // Spin while suspended
-            while (m_suspended.load() && !IsStopped())
+            // Spin while suspended or user-paused
+            while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (IsStopped()) break;
 
