@@ -6,6 +6,22 @@ This file provides session-start context for Claude Code. Read it before making 
 
 - **Always commit after finishing any modification.** Include a detailed commit message: what files changed, what was added/fixed/refactored, and why. Use the imperative mood (e.g., "Fix …", "Add …", "Refactor …").
 
+## Code exploration — codebase-memory-mcp
+
+This project is indexed in the knowledge graph as **`K-git-AriesAutomationTools`** (750 nodes, 1236 edges).
+**Always use these tools first** for any code exploration before falling back to Grep/Glob/Read:
+
+| Tool | When to use |
+|------|-------------|
+| `search_graph(name_pattern / label / qn_pattern)` | Find a function, class, method, or enum by name |
+| `get_code_snippet(qualified_name)` | Get exact source for a known symbol |
+| `trace_path(function_name, mode=calls\|data_flow)` | Follow call chains or data flow |
+| `get_architecture(aspects)` | Project structure, packages, dependency overview |
+| `search_code(pattern)` | Graph-augmented text search (use instead of grep for code) |
+| `query_graph(cypher)` | Complex relationship queries |
+
+If the index seems stale after large refactors, run `index_repository(repo_path="k:\\git\\AriesAutomationTools", mode="moderate")`.
+
 ## What this project is
 
 A portable C++17 desktop automation tool (Windows/Linux/macOS). Users define "workflows" of
