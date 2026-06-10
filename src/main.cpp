@@ -1,5 +1,6 @@
 #include "ui/app_ui.hpp"
 #include "config/config_manager.hpp"
+#include "icon_data.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -22,6 +23,21 @@ int main(int /*argc*/, char** /*argv*/) {
         fprintf(stderr, "SDL_CreateWindow error: %s\n", SDL_GetError());
         SDL_Quit();
         return 1;
+    }
+
+    // Set window icon from embedded 32x32 RGBA pixel data
+    {
+        SDL_Surface* icon = SDL_CreateRGBSurfaceFrom(
+            const_cast<uint8_t*>(kIconPixels),
+            32, 32, 32, 32 * 4,
+            0x000000FF,   // R mask
+            0x0000FF00,   // G mask
+            0x00FF0000,   // B mask
+            0xFF000000);  // A mask
+        if (icon) {
+            SDL_SetWindowIcon(window, icon);
+            SDL_FreeSurface(icon);
+        }
     }
 
     SDL_Renderer* renderer = SDL_CreateRenderer(

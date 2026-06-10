@@ -127,14 +127,22 @@ void WorkflowEngine::MonitorLoop() {
     while (!m_monitorStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-        // Check each workflow's smart detection
+        int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+
         for (size_t i = 0; i < m_workflows.size(); ++i) {
             auto& wf = m_workflows[i];
             auto& sc = m_schedulers[i];
             if (!wf.smart_detection || !sc->IsRunning()) continue;
 
-            uint64_t idle = m_monitor->MillisSinceLastUserActivity();
-            sc->SetSuspended(idle < (uint64_t)wf.smart_detection_idle_ms);
+            uint64_t idle_ms = m_monitor->MillisSinceLastUserActivity();
+            // Compute when the last input event occurred (absolute time)
+            int64_t last_active_ms = now_ms - (int64_t)idle_ms;
+            // Only suspend if user was active AFTER this workflow started.
+            // This prevents the "Start" button click itself from immediately
+            // triggering a suspension.
+            bool active_after_start = last_active_ms > sc->GetStartTimeMs();
+            sc->SetSuspended(active_after_start && idle_ms < (uint64_t)wf.smart_detection_idle_ms);
         }
     }
 }

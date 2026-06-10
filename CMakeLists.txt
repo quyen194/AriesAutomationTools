@@ -71,6 +71,13 @@ set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp
 )
 
+# ── Windows resource file (EXE icon) ─────────────────────────────────────────
+if(WIN32)
+    set(WIN_RESOURCES assets/resources.rc)
+else()
+    set(WIN_RESOURCES "")
+endif()
+
 # ── Executable ────────────────────────────────────────────────────────────────
 add_executable(AriesAutomationTools
     src/main.cpp
@@ -87,6 +94,7 @@ add_executable(AriesAutomationTools
     src/ui/widgets/record_overlay.cpp
     ${PLATFORM_SOURCES}
     ${IMGUI_SOURCES}
+    ${WIN_RESOURCES}
 )
 
 if(WIN32)

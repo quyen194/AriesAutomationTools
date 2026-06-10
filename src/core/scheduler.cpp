@@ -25,7 +25,10 @@ void Scheduler::Start() {
     if (m_running.load()) return;
     m_stopFlag = false;
     m_running  = true;
-    m_thread   = std::thread(&Scheduler::Run, this);
+    m_startTimeMs.store(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    m_thread = std::thread(&Scheduler::Run, this);
 }
 
 void Scheduler::Stop() {

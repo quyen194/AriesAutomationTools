@@ -121,10 +121,22 @@ private:
     }
 
     void sendKey(WORD vk, bool down) {
+        // Extended keys need KEYEVENTF_EXTENDEDKEY for correct delivery
+        static const WORD kExtended[] = {
+            VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
+            VK_HOME, VK_END, VK_INSERT, VK_DELETE,
+            VK_PRIOR, VK_NEXT, VK_NUMLOCK,
+            VK_RCONTROL, VK_RMENU, VK_RWIN, VK_DIVIDE
+        };
+        bool extended = false;
+        for (WORD ek : kExtended) if (vk == ek) { extended = true; break; }
+
         INPUT in{};
         in.type       = INPUT_KEYBOARD;
         in.ki.wVk     = vk;
-        in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
+        in.ki.wScan   = (WORD)MapVirtualKey(vk, MAPVK_VK_TO_VSC);
+        in.ki.dwFlags = (down ? 0 : KEYEVENTF_KEYUP) |
+                        (extended ? KEYEVENTF_EXTENDEDKEY : 0);
         SendInput(1, &in, sizeof(INPUT));
     }
 

@@ -1,0 +1,4 @@
+// Windows resource file — sets the EXE icon shown in Explorer / taskbar
+#include <windows.h>
+
+IDI_APPICON ICON "app.ico"
