@@ -22,7 +22,7 @@ private:
     void RenderMenuBar();
     void RenderTopBar();
     void RenderWorkflowPanel(Workflow& wf);
-    void RenderTriggerEditor(StartTrigger& trig);
+    void RenderTriggerEditor(StartTrigger& trig, const std::string& wfId);
     void RenderWindowTargetEditor(WindowTarget& wt);
 
     void AddWorkflow();

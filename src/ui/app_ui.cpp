@@ -219,7 +219,7 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     ImGui::Separator();
 
     // Trigger
-    RenderTriggerEditor(wf.trigger);
+    RenderTriggerEditor(wf.trigger, wf.id);
     ImGui::Separator();
 
     // Timing
@@ -246,7 +246,10 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         }
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
-        if (ImGui::Button("[Stop Rec]")) m_recorder.Stop();
+        if (ImGui::Button("[Stop Rec]")) {
+            m_recorder.Stop();
+            m_recOverlay.TriggerReview(m_recorder);
+        }
         ImGui::PopStyleColor();
     }
 
@@ -323,8 +326,8 @@ void AppUI::RenderTriggerPickOverlay() {
     ImGui::End();
 }
 
-void AppUI::RenderTriggerEditor(StartTrigger& trig) {
-    static const char* kTTypes[] = {"Manual","Schedule (cron)","Pixel color"};
+void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
+    static const char* kTTypes[] = {"Manual","Schedule","Pixel color"};
     int typeIdx = (int)trig.type;
     ImGui::SetNextItemWidth(160);
     if (ImGui::Combo("Trigger##tr", &typeIdx, kTTypes, 3)) {
@@ -333,13 +336,92 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig) {
     }
 
     if (trig.type == StartTrigger::Type::Schedule) {
-        static char cronBuf[64]{};
-        strncpy(cronBuf, trig.cron_expr.c_str(), sizeof(cronBuf)-1);
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::InputText("Cron##tr", cronBuf, sizeof(cronBuf)))
-            { trig.cron_expr = cronBuf; m_dirty = true; }
-        ImGui::SameLine();
-        ImGui::TextDisabled("e.g. */5 * * * *");
+        // Track per-workflow to reinitialize buffers on switch
+        static std::string s_wfId;
+        static char s_hh[16] = "*";
+        static char s_mm[16] = "*";
+
+        // Reinit text fields when switching workflows
+        if (wfId != s_wfId) {
+            s_wfId = wfId;
+            std::string f[5] = {"*","*","*","*","*"};
+            std::istringstream ss(trig.cron_expr);
+            for (int i = 0; i < 5; ++i) if (!(ss >> f[i])) f[i] = "*";
+            strncpy(s_mm, f[0].c_str(), sizeof(s_mm)-1);
+            strncpy(s_hh, f[1].c_str(), sizeof(s_hh)-1);
+        }
+
+        // Parse cron_expr for combo fields (dropdowns always sync from source)
+        std::string f[5] = {"*","*","*","*","*"};
+        {
+            std::istringstream ss(trig.cron_expr);
+            for (int i = 0; i < 5; ++i) if (!(ss >> f[i])) f[i] = "*";
+        }
+
+        bool changed = false;
+
+        // ── Row 1: HH and MM text inputs ─────────────────────────────────────
+        ImGui::Text("HH:"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(55);
+        if (ImGui::InputText("##hh_tr", s_hh, sizeof(s_hh))) {
+            f[1] = s_hh; changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hour (0-23, * = any, */2 = every 2 hours)");
+
+        ImGui::SameLine(0, 12);
+        ImGui::Text("MM:"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(55);
+        if (ImGui::InputText("##mm_tr", s_mm, sizeof(s_mm))) {
+            f[0] = s_mm; changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Minute (0-59, * = any, */5 = every 5 min)");
+
+        // ── Row 2: Day / Month / Weekday combos ──────────────────────────────
+        static const char* kDays[32] = {
+            "*","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15",
+            "16","17","18","19","20","21","22","23","24","25","26","27","28","29","30","31"
+        };
+        static const char* kMonths[13] = {
+            "*","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
+        };
+        static const char* kDOW[8] = {
+            "*","Sun","Mon","Tue","Wed","Thu","Fri","Sat"
+        };
+
+        int dayIdx = 0;
+        for (int i = 1; i <= 31; ++i) if (f[2] == kDays[i]) { dayIdx = i; break; }
+
+        int monIdx = 0;
+        if (f[3] != "*") { try { int n=std::stoi(f[3]); if(n>=1&&n<=12) monIdx=n; } catch(...){} }
+
+        int dowIdx = 0;
+        if (f[4] != "*") { try { int n=std::stoi(f[4]); if(n>=0&&n<=6) dowIdx=n+1; } catch(...){} }
+
+        ImGui::Text("Day:");  ImGui::SameLine();
+        ImGui::SetNextItemWidth(58);
+        if (ImGui::Combo("##day_tr", &dayIdx, kDays, 32))
+            { f[2] = kDays[dayIdx]; changed = true; }
+
+        ImGui::SameLine(0, 12);
+        ImGui::Text("Mon:");  ImGui::SameLine();
+        ImGui::SetNextItemWidth(58);
+        if (ImGui::Combo("##mon_tr", &monIdx, kMonths, 13))
+            { f[3] = monIdx==0 ? "*" : std::to_string(monIdx); changed = true; }
+
+        ImGui::SameLine(0, 12);
+        ImGui::Text("DOW:");  ImGui::SameLine();
+        ImGui::SetNextItemWidth(58);
+        if (ImGui::Combo("##dow_tr", &dowIdx, kDOW, 8))
+            { f[4] = dowIdx==0 ? "*" : std::to_string(dowIdx-1); changed = true; }
+
+        if (changed) {
+            trig.cron_expr = std::string(f[0])+" "+f[1]+" "+f[2]+" "+f[3]+" "+f[4];
+            m_dirty = true;
+        }
+
+        ImGui::TextDisabled("cron: %s", trig.cron_expr.c_str());
 
     } else if (trig.type == StartTrigger::Type::Pixel) {
         ImGui::InputInt("Pixel X##tr", &trig.pixel_x);

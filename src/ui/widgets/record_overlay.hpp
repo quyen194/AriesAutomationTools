@@ -10,6 +10,8 @@ struct RecordOverlayWidget {
     std::function<void(std::vector<Activity>)> OnFinished; // called with captured activities
 
     void Render(RecordEngine& engine);
+    // Call this when stopping recording from outside the overlay (e.g. main panel [Stop Rec] button)
+    void TriggerReview(RecordEngine& engine);
 
 private:
     bool m_showReview    = false;

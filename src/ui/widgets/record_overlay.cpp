@@ -1,6 +1,11 @@
 #include "record_overlay.hpp"
 #include "imgui.h"
 
+void RecordOverlayWidget::TriggerReview(RecordEngine& engine) {
+    m_captured   = engine.ToActivities(m_captureTimings, m_fixedDelay);
+    m_showReview = true;
+}
+
 void RecordOverlayWidget::Render(RecordEngine& engine) {
     if (!engine.IsRecording() && !m_showReview) return;
 
