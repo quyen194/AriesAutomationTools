@@ -47,4 +47,9 @@ private:
     RecordOverlayWidget    m_recOverlay;
 
     char                   m_hotkeyBuf[32]{};
+
+    // Pixel trigger position picker
+    bool          m_trigPickActive = false;
+    StartTrigger* m_trigPickTarget = nullptr;
+    void RenderTriggerPickOverlay();
 };

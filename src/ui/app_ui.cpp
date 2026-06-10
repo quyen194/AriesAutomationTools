@@ -1,5 +1,6 @@
 #include "app_ui.hpp"
 #include "imgui.h"
+#include <SDL.h>
 #include <algorithm>
 #include <sstream>
 #include <random>
@@ -140,7 +141,7 @@ void AppUI::Render() {
 
     ImGui::End();
 
-    // Always-on-top record overlay
+    if (m_trigPickActive) RenderTriggerPickOverlay();
     m_recOverlay.Render(m_recorder);
 }
 
@@ -284,6 +285,44 @@ void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {
     }
 }
 
+void AppUI::RenderTriggerPickOverlay() {
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 pos = io.MousePos;
+    pos.x += 16.f; pos.y += 16.f;
+    if (pos.x + 220 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 220;
+    if (pos.y + 70  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 70;
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoResize   |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+
+    if (ImGui::Begin("##trigpickoverlay", nullptr, flags)) {
+        int gx = 0, gy = 0;
+        SDL_GetGlobalMouseState(&gx, &gy);
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick pixel pos: %d, %d", gx, gy);
+        ImGui::TextDisabled("Enter = confirm   Esc = cancel");
+
+        if (ImGui::Button("Capture##trigpick") ||
+            ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+            if (m_trigPickTarget) {
+                m_trigPickTarget->pixel_x = gx;
+                m_trigPickTarget->pixel_y = gy;
+                m_dirty = true;
+            }
+            m_trigPickActive = false;
+            m_trigPickTarget = nullptr;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            m_trigPickActive = false;
+            m_trigPickTarget = nullptr;
+        }
+    }
+    ImGui::End();
+}
+
 void AppUI::RenderTriggerEditor(StartTrigger& trig) {
     static const char* kTTypes[] = {"Manual","Schedule (cron)","Pixel color"};
     int typeIdx = (int)trig.type;
@@ -304,8 +343,11 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig) {
 
     } else if (trig.type == StartTrigger::Type::Pixel) {
         ImGui::InputInt("Pixel X##tr", &trig.pixel_x);
-        ImGui::SameLine();
         ImGui::InputInt("Pixel Y##tr", &trig.pixel_y);
+        if (ImGui::Button("Pick pixel position##tr")) {
+            m_trigPickActive = true;
+            m_trigPickTarget = &trig;
+        }
 
         float col[3] = {
             ((trig.pixel_color>>16)&0xFF)/255.f,
