@@ -15,7 +15,7 @@ public:
     ~AppUI() = default;
 
     void Init(const std::string& config_path);
-    void Render();  // call once per frame
+    void Render();
     void Shutdown();
 
 private:
@@ -29,6 +29,7 @@ private:
     void DuplicateWorkflow(const std::string& id);
     void DeleteWorkflow(const std::string& id);
     void SaveConfig();
+    void DiscardConfig();
     void LoadConfig(const std::string& path);
     std::string EnsureId(Workflow& wf);
 
@@ -49,12 +50,12 @@ private:
     char                   m_hotkeyBuf[64]{};
     bool                   m_hotkeyCapture = false;
 
-    // Recording hotkey
-    char                   m_recHotkeyBuf[64]{};
-    bool                   m_recHotkeyCapture = false;
-
     // Pixel trigger position picker
     bool          m_trigPickActive = false;
     StartTrigger* m_trigPickTarget = nullptr;
     void RenderTriggerPickOverlay();
+
+    // Workflow delete confirmation
+    std::string   m_confirmDeleteWfId;
+    bool          m_pendingConfirmWf = false;
 };

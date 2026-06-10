@@ -46,27 +46,23 @@ static std::string AppImGuiKeyToName(ImGuiKey key) {
     }
 }
 
-// ── Check if a hotkey string combo is pressed this frame ──────────────────────
-// Format: "f8", "ctrl+r", "shift+f6", etc.
 static bool IsHotkeyPressed(const std::string& hk) {
     if (hk.empty()) return false;
     bool needCtrl = false, needShift = false, needAlt = false;
     std::string rem = hk;
-    // Strip modifier prefixes
     for (;;) {
         size_t p = rem.find('+');
         if (p == std::string::npos) break;
         std::string part = rem.substr(0, p);
-        if (part == "ctrl" || part == "lctrl" || part == "rctrl")  { needCtrl  = true; rem = rem.substr(p+1); }
+        if (part == "ctrl" || part == "lctrl" || part == "rctrl")       { needCtrl  = true; rem = rem.substr(p+1); }
         else if (part == "shift"|| part == "lshift"|| part == "rshift") { needShift = true; rem = rem.substr(p+1); }
         else if (part == "alt"  || part == "lalt"  || part == "ralt")   { needAlt   = true; rem = rem.substr(p+1); }
-        else break; // not a modifier, stop
+        else break;
     }
     ImGuiIO& io = ImGui::GetIO();
     if (needCtrl  != io.KeyCtrl)  return false;
     if (needShift != io.KeyShift) return false;
     if (needAlt   != io.KeyAlt)   return false;
-    // Match main key
     for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
         ImGuiKey key = (ImGuiKey)k;
         if (!ImGui::IsKeyPressed(key, false)) continue;
@@ -94,11 +90,13 @@ static std::string GenId() {
 AppUI::AppUI() {
     m_wfList.OnAdd       = [this]() { AddWorkflow(); };
     m_wfList.OnDuplicate = [this](const std::string& id) { DuplicateWorkflow(id); };
-    m_wfList.OnDelete    = [this](const std::string& id) { DeleteWorkflow(id); };
-    m_wfList.OnSelect    = [this](const std::string& id) { m_selectedId = id; };
+    m_wfList.OnDelete    = [this](const std::string& id) {
+        m_confirmDeleteWfId = id;
+        m_pendingConfirmWf  = true;
+    };
+    m_wfList.OnSelect = [this](const std::string& id) { m_selectedId = id; };
 
     m_actEditor.OnChanged = [this]() {
-        // Re-sync engine workflows after edit
         m_engine.SetWorkflows(m_config.workflows);
         m_dirty = true;
     };
@@ -122,28 +120,31 @@ AppUI::AppUI() {
         m_engine.SetWorkflows(m_config.workflows);
         m_dirty = true;
     };
+
+    m_recOverlay.OnHotkeyChanged = [this](const std::string& hk) {
+        m_config.record_hotkey = hk;
+        m_dirty = true;
+    };
 }
 
 void AppUI::Init(const std::string& config_path) {
     m_configPath = config_path;
     try {
         m_config = ConfigManager::Load(config_path);
-    } catch (...) {
-        // Start with empty config if file missing
-    }
+    } catch (...) {}
 
     m_engine.Init();
     m_engine.SetWorkflows(m_config.workflows);
-    strncpy(m_hotkeyBuf,    m_config.global_hotkey.c_str(), sizeof(m_hotkeyBuf)-1);
-    strncpy(m_recHotkeyBuf, m_config.record_hotkey.c_str(), sizeof(m_recHotkeyBuf)-1);
+    strncpy(m_hotkeyBuf, m_config.global_hotkey.c_str(), sizeof(m_hotkeyBuf)-1);
+    m_recOverlay.SetHotkey(m_config.record_hotkey);
     m_engine.SetGlobalHotkey(m_config.global_hotkey);
+    m_actEditor.SetWorkflows(&m_config.workflows);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
         m_engine.StartWorkflow(id);
     });
 
-    m_triggers.Start(m_config.workflows,
-                     nullptr, // pixel checker wired through engine internals
+    m_triggers.Start(m_config.workflows, nullptr,
                      [this](const std::string& id) { m_engine.StartWorkflow(id); });
 
     if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
@@ -162,12 +163,30 @@ void AppUI::SaveConfig() {
     } catch (...) {}
 }
 
+void AppUI::DiscardConfig() {
+    try {
+        m_engine.StopAll();
+        m_config = ConfigManager::Load(m_configPath);
+        m_engine.SetWorkflows(m_config.workflows);
+        strncpy(m_hotkeyBuf, m_config.global_hotkey.c_str(), sizeof(m_hotkeyBuf)-1);
+        m_recOverlay.SetHotkey(m_config.record_hotkey);
+        m_engine.SetGlobalHotkey(m_config.global_hotkey);
+        m_actEditor.SetWorkflows(&m_config.workflows);
+        m_dirty = false;
+        bool selValid = std::any_of(m_config.workflows.begin(), m_config.workflows.end(),
+            [&](auto& w){ return w.id == m_selectedId; });
+        if (!selValid)
+            m_selectedId = m_config.workflows.empty() ? "" : m_config.workflows[0].id;
+    } catch (...) {}
+}
+
 void AppUI::LoadConfig(const std::string& path) {
     try {
         m_engine.StopAll();
         m_config     = ConfigManager::Load(path);
         m_configPath = path;
         m_engine.SetWorkflows(m_config.workflows);
+        m_actEditor.SetWorkflows(&m_config.workflows);
         m_dirty = false;
         if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
     } catch (...) {}
@@ -178,13 +197,13 @@ void AppUI::LoadConfig(const std::string& path) {
 void AppUI::Render() {
     m_engine.PollHotkeys();
 
-    // Recording hotkey: toggle record on/off
-    if (!m_recHotkeyCapture && IsHotkeyPressed(m_config.record_hotkey)) {
-        if (!m_recorder.IsRecording()) {
-            m_recorder.Start();
-        } else {
+    // Recording hotkey: open window when idle, stop when recording
+    if (!m_recOverlay.IsHotkeyCapturing() && IsHotkeyPressed(m_config.record_hotkey)) {
+        if (m_recorder.IsRecording()) {
             m_recorder.Stop();
             m_recOverlay.TriggerReview(m_recorder);
+        } else if (!m_recOverlay.IsOpen()) {
+            m_recOverlay.Open();
         }
     }
 
@@ -201,6 +220,31 @@ void AppUI::Render() {
     RenderMenuBar();
     RenderTopBar();
 
+    // Workflow delete confirmation modal
+    if (m_pendingConfirmWf) {
+        ImGui::OpenPopup("Confirm Delete##wf");
+        m_pendingConfirmWf = false;
+    }
+    if (ImGui::BeginPopupModal("Confirm Delete##wf", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
+            [&](auto& w){ return w.id == m_confirmDeleteWfId; });
+        const char* name = (it != m_config.workflows.end()) ? it->name.c_str() : "?";
+        ImGui::Text("Delete workflow \"%s\"?", name);
+        ImGui::Separator();
+        if (ImGui::Button("Yes##wfdel", ImVec2(80, 0))) {
+            DeleteWorkflow(m_confirmDeleteWfId);
+            m_confirmDeleteWfId.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("No##wfdel", ImVec2(80, 0))) {
+            m_confirmDeleteWfId.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     float leftW = 200.0f;
     ImGui::BeginChild("##left", ImVec2(leftW, 0), true);
     m_wfList.Render(
@@ -213,7 +257,7 @@ void AppUI::Render() {
 
     ImGui::BeginChild("##right", ImVec2(0, 0), true);
     auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
-                           [&](auto& w){ return w.id == m_selectedId; });
+        [&](auto& w){ return w.id == m_selectedId; });
     if (it != m_config.workflows.end()) {
         RenderWorkflowPanel(*it);
     } else {
@@ -231,6 +275,11 @@ void AppUI::RenderMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Save Config", "Ctrl+S")) SaveConfig();
+        ImGui::BeginDisabled(!m_dirty);
+        if (ImGui::MenuItem("Discard Changes")) DiscardConfig();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered() && !m_dirty)
+            ImGui::SetTooltip("No unsaved changes");
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
@@ -265,10 +314,10 @@ void AppUI::RenderTopBar() {
             auto name = AppImGuiKeyToName(key);
             if (!name.empty()) {
                 std::string hk;
-                ImGuiIO& io = ImGui::GetIO();
-                if (io.KeyCtrl)  hk += "ctrl+";
-                if (io.KeyShift) hk += "shift+";
-                if (io.KeyAlt)   hk += "alt+";
+                ImGuiIO& hkio = ImGui::GetIO();
+                if (hkio.KeyCtrl)  hk += "ctrl+";
+                if (hkio.KeyShift) hk += "shift+";
+                if (hkio.KeyAlt)   hk += "alt+";
                 hk += name;
                 strncpy(m_hotkeyBuf, hk.c_str(), sizeof(m_hotkeyBuf)-1);
                 m_config.global_hotkey = hk;
@@ -300,6 +349,9 @@ void AppUI::RenderTopBar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unsaved changes");
         ImGui::SameLine();
         if (ImGui::SmallButton("Save")) SaveConfig();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Discard")) DiscardConfig();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload config from disk, discarding all changes");
     }
 
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 120);
@@ -312,7 +364,6 @@ void AppUI::RenderTopBar() {
 }
 
 void AppUI::RenderWorkflowPanel(Workflow& wf) {
-    // Header
     char nameBuf[128]{};
     strncpy(nameBuf, wf.name.c_str(), sizeof(nameBuf)-1);
     ImGui::SetNextItemWidth(200);
@@ -335,16 +386,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     }
 
     ImGui::Separator();
-
-    // Window target
     RenderWindowTargetEditor(wf.window);
     ImGui::Separator();
-
-    // Trigger
     RenderTriggerEditor(wf.trigger, wf.id);
     ImGui::Separator();
 
-    // Timing
     if (ImGui::InputInt("Repeat interval (ms)", &wf.repeat_interval_ms))
         { wf.repeat_interval_ms = std::max(100, wf.repeat_interval_ms); m_dirty = true; }
     if (ImGui::IsItemHovered())
@@ -354,7 +400,6 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Number of times to run (0 = repeat forever until stopped)");
 
-    // Smart detection
     if (ImGui::Checkbox("Smart detection", &wf.smart_detection)) m_dirty = true;
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(
@@ -372,67 +417,18 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
 
     ImGui::Separator();
 
-    // Record button + hotkey capture
-    if (!m_recorder.IsRecording()) {
-        if (ImGui::Button("[Rec]")) {
-            m_recorder.Start();
-        }
+    // [Rec] opens the recording window; recording is started from inside it
+    if (!m_recorder.IsRecording() && !m_recOverlay.IsOpen()) {
+        if (ImGui::Button("[Rec]"))
+            m_recOverlay.Open();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Start recording mouse and keyboard events.\n"
-                              "Set filter options in the overlay before stopping.");
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
-        if (ImGui::Button("[Stop Rec]")) {
-            m_recorder.Stop();
-            m_recOverlay.TriggerReview(m_recorder);
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Stop recording and open the review screen");
+            ImGui::SetTooltip("Open recording window to configure filters, hotkey, and start recording");
+    } else if (m_recorder.IsRecording()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.35f, 0.35f, 1.f));
+        ImGui::Text("[Recording...]");
         ImGui::PopStyleColor();
-    }
-    ImGui::SameLine(0, 10);
-    ImGui::TextDisabled("HK:"); ImGui::SameLine();
-    if (m_recHotkeyCapture) {
-        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Cancel##rchk")) m_recHotkeyCapture = false;
-        // Capture same as global hotkey
-        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
-            ImGuiKey key = (ImGuiKey)k;
-            if (!ImGui::IsKeyPressed(key, false)) continue;
-            if (key == ImGuiKey_Escape) { m_recHotkeyCapture = false; break; }
-            if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
-                key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
-                key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
-                key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
-            auto name = AppImGuiKeyToName(key);
-            if (!name.empty()) {
-                std::string hk;
-                ImGuiIO& hkio = ImGui::GetIO();
-                if (hkio.KeyCtrl)  hk += "ctrl+";
-                if (hkio.KeyShift) hk += "shift+";
-                if (hkio.KeyAlt)   hk += "alt+";
-                hk += name;
-                strncpy(m_recHotkeyBuf, hk.c_str(), sizeof(m_recHotkeyBuf)-1);
-                m_config.record_hotkey = hk;
-                m_dirty = true;
-                m_recHotkeyCapture = false;
-            }
-            break;
-        }
-    } else {
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::InputText("##rchk", m_recHotkeyBuf, sizeof(m_recHotkeyBuf),
-                              ImGuiInputTextFlags_EnterReturnsTrue)) {
-            m_config.record_hotkey = m_recHotkeyBuf;
-            m_dirty = true;
-        }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hotkey to start/stop recording (e.g. f8, ctrl+r)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Capture##rchk")) m_recHotkeyCapture = true;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Click then press a key combination");
+            ImGui::SetTooltip("Recording in progress — use the overlay panel to stop");
     }
 
     ImGui::Separator();
@@ -460,17 +456,14 @@ void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {
         ImGui::SetNextItemWidth(300);
         if (ImGui::InputText("Title##wt", buf, sizeof(buf)))
             { wt.title = buf; m_dirty = true; }
-
     } else if (wt.type == WindowTarget::Type::ByClass) {
         static char buf[256]{};
         strncpy(buf, wt.class_name.c_str(), sizeof(buf)-1);
         ImGui::SetNextItemWidth(300);
         if (ImGui::InputText("Class##wt", buf, sizeof(buf)))
             { wt.class_name = buf; m_dirty = true; }
-
     } else if (wt.type == WindowTarget::Type::ByHandle) {
-        uint64_t h = wt.handle;
-        ImGui::Text("Handle: %llu", (unsigned long long)h);
+        ImGui::Text("Handle: %llu", (unsigned long long)wt.handle);
     }
 }
 
@@ -493,7 +486,6 @@ void AppUI::RenderTriggerPickOverlay() {
         SDL_GetGlobalMouseState(&gx, &gy);
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick pixel pos: %d, %d", gx, gy);
 
-        // Show live pixel color under cursor
 #if defined(_WIN32)
         {
             HDC dc = GetDC(nullptr);
@@ -561,12 +553,10 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
                           "Pixel color = run when a screen pixel matches a color");
 
     if (trig.type == StartTrigger::Type::Schedule) {
-        // Track per-workflow to reinitialize buffers on switch
         static std::string s_wfId;
         static char s_hh[16] = "*";
         static char s_mm[16] = "*";
 
-        // Reinit text fields when switching workflows
         if (wfId != s_wfId) {
             s_wfId = wfId;
             std::string f[5] = {"*","*","*","*","*"};
@@ -576,7 +566,6 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
             strncpy(s_hh, f[1].c_str(), sizeof(s_hh)-1);
         }
 
-        // Parse cron_expr for combo fields (dropdowns always sync from source)
         std::string f[5] = {"*","*","*","*","*"};
         {
             std::istringstream ss(trig.cron_expr);
@@ -585,25 +574,19 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
 
         bool changed = false;
 
-        // ── Row 1: HH and MM text inputs ─────────────────────────────────────
         ImGui::Text("HH:"); ImGui::SameLine();
         ImGui::SetNextItemWidth(55);
-        if (ImGui::InputText("##hh_tr", s_hh, sizeof(s_hh))) {
-            f[1] = s_hh; changed = true;
-        }
+        if (ImGui::InputText("##hh_tr", s_hh, sizeof(s_hh))) { f[1] = s_hh; changed = true; }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Hour (0-23, * = any, */2 = every 2 hours)");
 
         ImGui::SameLine(0, 12);
         ImGui::Text("MM:"); ImGui::SameLine();
         ImGui::SetNextItemWidth(55);
-        if (ImGui::InputText("##mm_tr", s_mm, sizeof(s_mm))) {
-            f[0] = s_mm; changed = true;
-        }
+        if (ImGui::InputText("##mm_tr", s_mm, sizeof(s_mm))) { f[0] = s_mm; changed = true; }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Minute (0-59, * = any, */5 = every 5 min)");
 
-        // ── Row 2: Day / Month / Weekday combos ──────────────────────────────
         static const char* kDays[32] = {
             "*","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15",
             "16","17","18","19","20","21","22","23","24","25","26","27","28","29","30","31"
@@ -611,9 +594,7 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         static const char* kMonths[13] = {
             "*","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
         };
-        static const char* kDOW[8] = {
-            "*","Sun","Mon","Tue","Wed","Thu","Fri","Sat"
-        };
+        static const char* kDOW[8] = { "*","Sun","Mon","Tue","Wed","Thu","Fri","Sat" };
 
         int dayIdx = 0;
         for (int i = 1; i <= 31; ++i) if (f[2] == kDays[i]) { dayIdx = i; break; }

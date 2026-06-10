@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include <SDL.h>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <random>
 #include <iomanip>
@@ -161,23 +162,53 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     {
         int total    = (int)wf.activities.size();
         int selCount = 0;
-        for (bool b : m_selection) if (b) ++selCount;
+        int firstSel = -1, lastSel = -1;
+        for (int j = 0; j < (int)m_selection.size(); ++j) {
+            if (m_selection[j]) {
+                if (firstSel < 0) firstSel = j;
+                lastSel = j;
+                ++selCount;
+            }
+        }
 
         bool allSel = (total > 0 && selCount == total);
         if (ImGui::Checkbox("##selAll", &allSel)) {
             std::fill(m_selection.begin(), m_selection.end(), allSel);
             if (!allSel) m_lastClickedIdx = -1;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all / deselect all");
 
         if (selCount > 0) {
+            // Move up/down (single selection only)
+            if (selCount == 1 && firstSel >= 0) {
+                ImGui::SameLine();
+                ImGui::BeginDisabled(firstSel == 0);
+                if (ImGui::SmallButton("^##bmv")) {
+                    std::swap(wf.activities[firstSel], wf.activities[firstSel - 1]);
+                    std::swap(m_selection[firstSel], m_selection[firstSel - 1]);
+                    m_lastClickedIdx = firstSel - 1;
+                    if (OnChanged) OnChanged();
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move up");
+
+                ImGui::SameLine();
+                ImGui::BeginDisabled(firstSel >= total - 1);
+                if (ImGui::SmallButton("v##bmv")) {
+                    std::swap(wf.activities[firstSel], wf.activities[firstSel + 1]);
+                    std::swap(m_selection[firstSel], m_selection[firstSel + 1]);
+                    m_lastClickedIdx = firstSel + 1;
+                    if (OnChanged) OnChanged();
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move down");
+            }
+
             ImGui::SameLine();
             if (ImGui::SmallButton("Del##bsel")) {
-                for (int i = total - 1; i >= 0; --i)
-                    if (m_selection[i]) wf.activities.erase(wf.activities.begin() + i);
-                m_selection.clear();
-                m_editIdx = -1;
-                if (OnChanged) OnChanged();
+                m_confirmDeleteBatch = true;
+                m_confirmDeleteIdx   = -1;
+                m_pendingConfirmOpen = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete selected activities");
             ImGui::SameLine();
@@ -201,8 +232,7 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         }
     }
 
-    // Deferred per-item operations from context menu / inline buttons
-    int ctxDeleteIdx  = -1;
+    // Deferred per-item operations from context menu
     int ctxEnableIdx  = -1;
     int ctxDisableIdx = -1;
     int ctxMoveUp     = -1;
@@ -217,19 +247,16 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         bool isSelected = (i < (int)m_selection.size()) && m_selection[i];
         bool isCurrent  = (currentStep == i);
 
-        // Auto-scroll to current running step
         if (isCurrent && currentStep != m_lastScrolledStep) {
             ImGui::SetScrollHereY(0.5f);
             m_lastScrolledStep = currentStep;
         }
 
-        // Green highlight for currently running step
         if (isCurrent) {
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.1f,0.65f,0.1f,0.90f));
         }
-        // Dim text for disabled activities (but not for the running step)
         if (!a.enabled && !isCurrent)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1.f));
 
@@ -241,7 +268,6 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick;
         if (ImGui::Selectable(label, highlighted, selFlags)) {
             if (ImGui::IsMouseDoubleClicked(0)) {
-                // Double-click: open edit modal
                 m_draft            = a;
                 m_editIdx          = i;
                 m_openModal        = true;
@@ -249,20 +275,16 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 m_scrollCapture    = false;
                 m_pickStage        = PickStage::None;
             } else {
-                // Single-click: selection logic
                 if (io.KeyShift && m_lastClickedIdx >= 0) {
-                    // Range select
                     std::fill(m_selection.begin(), m_selection.end(), false);
                     int lo = std::min(i, m_lastClickedIdx);
                     int hi = std::max(i, m_lastClickedIdx);
                     for (int j = lo; j <= hi && j < (int)m_selection.size(); ++j)
                         m_selection[j] = true;
                 } else if (io.KeyCtrl) {
-                    // Toggle select
                     if (i < (int)m_selection.size()) m_selection[i] = !m_selection[i];
                     m_lastClickedIdx = i;
                 } else {
-                    // Single select
                     std::fill(m_selection.begin(), m_selection.end(), false);
                     if (i < (int)m_selection.size()) m_selection[i] = true;
                     m_lastClickedIdx = i;
@@ -272,7 +294,7 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         if (!a.enabled && !isCurrent) ImGui::PopStyleColor();
         if (isCurrent)               ImGui::PopStyleColor(3);
 
-        // Drag-drop source (drag to reorder)
+        // Drag-drop source
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             ImGui::SetDragDropPayload("ACT_IDX", &i, sizeof(int));
             auto s = ActivitySummary(a);
@@ -310,6 +332,13 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 m_pickStage        = PickStage::None;
             }
             ImGui::Separator();
+            if (ImGui::MenuItem("Select All"))
+                std::fill(m_selection.begin(), m_selection.end(), true);
+            if (ImGui::MenuItem("Select None")) {
+                std::fill(m_selection.begin(), m_selection.end(), false);
+                m_lastClickedIdx = -1;
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Move Up",   "Ctrl+Up",   false, i > 0))
                 ctxMoveUp = i;
             if (ImGui::MenuItem("Move Down", "Ctrl+Down", false, i < (int)wf.activities.size()-1))
@@ -319,12 +348,15 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 if (a.enabled) ctxDisableIdx = i; else ctxEnableIdx = i;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) ctxDeleteIdx = i;
+            if (ImGui::MenuItem("Delete")) {
+                m_confirmDeleteIdx   = i;
+                m_confirmDeleteBatch = false;
+                m_pendingConfirmOpen = true;
+            }
             ImGui::EndPopup();
         }
 
-        // Inline action buttons — visible only when this item is selected
-        // Keep ItemSpacing.y unchanged so the row height stays consistent
+        // Inline action buttons (visible when selected)
         if (isSelected) {
             ImGui::SameLine();
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
@@ -336,7 +368,11 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(a.enabled ? "Disable this activity" : "Enable this activity");
             ImGui::SameLine();
-            if (ImGui::SmallButton("X##row")) ctxDeleteIdx = i;
+            if (ImGui::SmallButton("X##row")) {
+                m_confirmDeleteIdx   = i;
+                m_confirmDeleteBatch = false;
+                m_pendingConfirmOpen = true;
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this activity");
             ImGui::PopStyleVar();
         }
@@ -344,10 +380,9 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         ImGui::PopID();
     }
 
-    // Reset scroll tracking when workflow stops
     if (currentStep < 0) m_lastScrolledStep = -1;
 
-    // Process deferred operations (safe: loop is finished)
+    // Process deferred operations
     if (ctxMoveUp >= 1 && ctxMoveUp < (int)wf.activities.size()) {
         std::swap(wf.activities[ctxMoveUp], wf.activities[ctxMoveUp - 1]);
         if (ctxMoveUp   < (int)m_selection.size() &&
@@ -370,14 +405,8 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         wf.activities[ctxDisableIdx].enabled = false;
         if (OnChanged) OnChanged();
     }
-    if (ctxDeleteIdx >= 0 && ctxDeleteIdx < (int)wf.activities.size()) {
-        wf.activities.erase(wf.activities.begin() + ctxDeleteIdx);
-        m_selection.clear();
-        m_editIdx = -1;
-        if (OnChanged) OnChanged();
-    }
 
-    // Keyboard navigation (active when the list child window is focused)
+    // Keyboard navigation
     if (ImGui::IsWindowFocused()) {
         int n = (int)wf.activities.size();
         if (n > 0 && !io.WantTextInput) {
@@ -390,11 +419,10 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 }
             }
 
-            bool up   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true);
-            bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true);
+            bool up   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,  true);
+            bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
 
             if (io.KeyCtrl && selCount == 1 && firstSel >= 0) {
-                // Ctrl+Up/Down: move the selected item
                 if (up && firstSel > 0) {
                     std::swap(wf.activities[firstSel], wf.activities[firstSel - 1]);
                     std::swap(m_selection[firstSel], m_selection[firstSel - 1]);
@@ -407,7 +435,6 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                     if (OnChanged) OnChanged();
                 }
             } else if (!io.KeyCtrl) {
-                // Arrow: navigate selection; Shift+Arrow: extend selection
                 if (up && firstSel > 0) {
                     if (!io.KeyShift)
                         std::fill(m_selection.begin(), m_selection.end(), false);
@@ -420,7 +447,6 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                     m_selection[lastSel + 1] = true;
                     if (!io.KeyShift) m_lastClickedIdx = lastSel + 1;
                 }
-                // If nothing selected yet, select first item on Down
                 if (down && firstSel < 0 && n > 0) {
                     m_selection[0] = true;
                     m_lastClickedIdx = 0;
@@ -433,10 +459,52 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
     ImGui::Separator();
 
-    // Pick overlay (rendered outside the modal when active)
-    if (m_pickStage != PickStage::None) {
-        RenderPickOverlay();
+    // ── Confirm delete modal ───────────────────────────────────────────────────
+    if (m_pendingConfirmOpen) {
+        ImGui::OpenPopup("Confirm Delete##act");
+        m_pendingConfirmOpen = false;
     }
+    if (ImGui::BeginPopupModal("Confirm Delete##act", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_confirmDeleteBatch) {
+            int cnt = 0;
+            for (bool b : m_selection) if (b) ++cnt;
+            ImGui::Text("Delete %d selected %s?", cnt, cnt == 1 ? "activity" : "activities");
+        } else {
+            ImGui::Text("Delete activity %d?", m_confirmDeleteIdx + 1);
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Yes##cdel", ImVec2(80, 0))) {
+            if (m_confirmDeleteBatch) {
+                int total = (int)wf.activities.size();
+                for (int i = total - 1; i >= 0; --i)
+                    if (i < (int)m_selection.size() && m_selection[i])
+                        wf.activities.erase(wf.activities.begin() + i);
+                m_selection.clear();
+                m_editIdx = -1;
+            } else if (m_confirmDeleteIdx >= 0 &&
+                       m_confirmDeleteIdx < (int)wf.activities.size()) {
+                wf.activities.erase(wf.activities.begin() + m_confirmDeleteIdx);
+                m_selection.clear();
+                m_editIdx = -1;
+            }
+            m_confirmDeleteIdx   = -1;
+            m_confirmDeleteBatch = false;
+            if (OnChanged) OnChanged();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("No##cdel", ImVec2(80, 0))) {
+            m_confirmDeleteIdx   = -1;
+            m_confirmDeleteBatch = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // Pick overlay (rendered outside modal when active)
+    if (m_pickStage != PickStage::None)
+        RenderPickOverlay();
 
     if (m_openModal) {
         ImGui::OpenPopup("##actmodal");
@@ -467,7 +535,6 @@ void ActivityEditorWidget::RenderPickOverlay() {
         const char* lbl = (m_pickStage == PickStage::DragTo) ? "Pick end pos" : "Pick pos";
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
 
-        // Show live pixel color when picking for PixelCheckActivity
         bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data);
         if (isPixelPick) {
 #if defined(_WIN32)
@@ -489,9 +556,8 @@ void ActivityEditorWidget::RenderPickOverlay() {
 
         ImGui::TextDisabled("Enter = confirm   Esc = cancel");
 
-        if (ImGui::Button("Capture##pick") || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+        if (ImGui::Button("Capture##pick") || ImGui::IsKeyPressed(ImGuiKey_Enter, false))
             ApplyPickedCoords(gx, gy);
-        }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             m_pickStage = PickStage::None;
             m_openModal = true;
@@ -510,7 +576,6 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
             v.x = x; v.y = y;
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
             v.x = x; v.y = y;
-            // Also capture the pixel color at this position
 #if defined(_WIN32)
             HDC dc = GetDC(nullptr);
             if (dc) {
@@ -808,15 +873,43 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,RunWorkflowActivity>) {
-            static char idBuf[64]{};
-            strncpy(idBuf, v.workflow_id.c_str(), sizeof(idBuf)-1);
-            if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf)))
-                v.workflow_id = idBuf;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("ID of the workflow to run as a sub-workflow");
+            if (m_workflows && !m_workflows->empty()) {
+                ImGui::TextDisabled("Filter:"); ImGui::SameLine();
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputText("##wffilter", m_wfFilterBuf, sizeof(m_wfFilterBuf));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Type to filter workflows by name");
+
+                ImGui::BeginChild("##wflist_rw", ImVec2(0, 110), true);
+                std::string filterLow(m_wfFilterBuf);
+                for (auto& c : filterLow) c = (char)std::tolower((unsigned char)c);
+
+                for (auto& wf2 : *m_workflows) {
+                    std::string nameLow = wf2.name;
+                    for (auto& c : nameLow) c = (char)std::tolower((unsigned char)c);
+                    if (!filterLow.empty() && nameLow.find(filterLow) == std::string::npos)
+                        continue;
+                    bool selected = (v.workflow_id == wf2.id);
+                    char lbl[256];
+                    snprintf(lbl, sizeof(lbl), "%s##rwf%s", wf2.name.c_str(), wf2.id.c_str());
+                    if (ImGui::Selectable(lbl, selected))
+                        v.workflow_id = wf2.id;
+                }
+                ImGui::EndChild();
+                ImGui::TextDisabled("ID: %.24s", v.workflow_id.c_str());
+            } else {
+                static char idBuf[64]{};
+                strncpy(idBuf, v.workflow_id.c_str(), sizeof(idBuf)-1);
+                if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf)))
+                    v.workflow_id = idBuf;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("ID of the workflow to run as a sub-workflow");
+            }
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
         }
     }, data);
 }
+
+void ActivityEditorWidget::RenderMoveButtons(Workflow& /*wf*/, int /*idx*/) {}

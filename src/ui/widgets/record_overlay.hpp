@@ -3,29 +3,38 @@
 #include "core/workflow.hpp"
 #include <functional>
 #include <vector>
+#include <string>
 
-// Floating always-on-top toolbar shown during recording.
-// Shows event count, a Stop button, and filter options.
+// Floating always-on-top recording toolbar.
+// States: pre-start (Open()), recording in progress, review screen.
 struct RecordOverlayWidget {
     std::function<void(std::vector<Activity>)> OnFinished;
+    std::function<void(const std::string&)>    OnHotkeyChanged;
 
     void Render(RecordEngine& engine);
-    // Call when stopping recording from outside the overlay (e.g. main panel [Stop Rec])
     void TriggerReview(RecordEngine& engine);
 
+    void Open();
+    bool IsOpen()            const { return m_windowOpen; }
+    bool IsHotkeyCapturing() const { return m_hotkeyCapture; }
+    void SetHotkey(const std::string& hk);
+
 private:
+    bool m_windowOpen      = false;
     bool m_showReview      = false;
     bool m_captureTimings  = true;
     int  m_fixedDelay      = 100;
 
-    // Filter options
-    bool m_clicksOnly          = false;  // drop mouse-move and scroll events
-    bool m_stopMoveMsEnabled   = false;  // only keep moves where cursor paused >= threshold
+    bool m_clicksOnly          = false;
+    bool m_stopMoveMsEnabled   = false;
     int  m_stopMoveMsThreshold = 200;
+
+    char m_hotkeyBuf[64]{};
+    bool m_hotkeyCapture = false;
 
     RecordEngine*          m_engineRef = nullptr;
     std::vector<Activity>  m_captured;
-    std::vector<bool>      m_reviewSelected;  // per-activity accept checkbox
+    std::vector<bool>      m_reviewSelected;
 
     std::vector<Activity> ApplyFilters(std::vector<Activity> acts,
                                        const std::vector<RecordedEvent>& evs) const;
