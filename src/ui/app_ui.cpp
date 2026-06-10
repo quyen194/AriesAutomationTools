@@ -46,6 +46,35 @@ static std::string AppImGuiKeyToName(ImGuiKey key) {
     }
 }
 
+// ── Check if a hotkey string combo is pressed this frame ──────────────────────
+// Format: "f8", "ctrl+r", "shift+f6", etc.
+static bool IsHotkeyPressed(const std::string& hk) {
+    if (hk.empty()) return false;
+    bool needCtrl = false, needShift = false, needAlt = false;
+    std::string rem = hk;
+    // Strip modifier prefixes
+    for (;;) {
+        size_t p = rem.find('+');
+        if (p == std::string::npos) break;
+        std::string part = rem.substr(0, p);
+        if (part == "ctrl" || part == "lctrl" || part == "rctrl")  { needCtrl  = true; rem = rem.substr(p+1); }
+        else if (part == "shift"|| part == "lshift"|| part == "rshift") { needShift = true; rem = rem.substr(p+1); }
+        else if (part == "alt"  || part == "lalt"  || part == "ralt")   { needAlt   = true; rem = rem.substr(p+1); }
+        else break; // not a modifier, stop
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    if (needCtrl  != io.KeyCtrl)  return false;
+    if (needShift != io.KeyShift) return false;
+    if (needAlt   != io.KeyAlt)   return false;
+    // Match main key
+    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+        ImGuiKey key = (ImGuiKey)k;
+        if (!ImGui::IsKeyPressed(key, false)) continue;
+        if (AppImGuiKeyToName(key) == rem) return true;
+    }
+    return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 static std::string GenId() {
@@ -105,7 +134,8 @@ void AppUI::Init(const std::string& config_path) {
 
     m_engine.Init();
     m_engine.SetWorkflows(m_config.workflows);
-    strncpy(m_hotkeyBuf, m_config.global_hotkey.c_str(), sizeof(m_hotkeyBuf)-1);
+    strncpy(m_hotkeyBuf,    m_config.global_hotkey.c_str(), sizeof(m_hotkeyBuf)-1);
+    strncpy(m_recHotkeyBuf, m_config.record_hotkey.c_str(), sizeof(m_recHotkeyBuf)-1);
     m_engine.SetGlobalHotkey(m_config.global_hotkey);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
@@ -147,6 +177,16 @@ void AppUI::LoadConfig(const std::string& path) {
 
 void AppUI::Render() {
     m_engine.PollHotkeys();
+
+    // Recording hotkey: toggle record on/off
+    if (!m_recHotkeyCapture && IsHotkeyPressed(m_config.record_hotkey)) {
+        if (!m_recorder.IsRecording()) {
+            m_recorder.Start();
+        } else {
+            m_recorder.Stop();
+            m_recOverlay.TriggerReview(m_recorder);
+        }
+    }
 
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0,0));
@@ -332,7 +372,7 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
 
     ImGui::Separator();
 
-    // Record button
+    // Record button + hotkey capture
     if (!m_recorder.IsRecording()) {
         if (ImGui::Button("[Rec]")) {
             m_recorder.Start();
@@ -349,6 +389,50 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Stop recording and open the review screen");
         ImGui::PopStyleColor();
+    }
+    ImGui::SameLine(0, 10);
+    ImGui::TextDisabled("HK:"); ImGui::SameLine();
+    if (m_recHotkeyCapture) {
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Cancel##rchk")) m_recHotkeyCapture = false;
+        // Capture same as global hotkey
+        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+            ImGuiKey key = (ImGuiKey)k;
+            if (!ImGui::IsKeyPressed(key, false)) continue;
+            if (key == ImGuiKey_Escape) { m_recHotkeyCapture = false; break; }
+            if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
+                key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
+                key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
+                key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
+            auto name = AppImGuiKeyToName(key);
+            if (!name.empty()) {
+                std::string hk;
+                ImGuiIO& hkio = ImGui::GetIO();
+                if (hkio.KeyCtrl)  hk += "ctrl+";
+                if (hkio.KeyShift) hk += "shift+";
+                if (hkio.KeyAlt)   hk += "alt+";
+                hk += name;
+                strncpy(m_recHotkeyBuf, hk.c_str(), sizeof(m_recHotkeyBuf)-1);
+                m_config.record_hotkey = hk;
+                m_dirty = true;
+                m_recHotkeyCapture = false;
+            }
+            break;
+        }
+    } else {
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::InputText("##rchk", m_recHotkeyBuf, sizeof(m_recHotkeyBuf),
+                              ImGuiInputTextFlags_EnterReturnsTrue)) {
+            m_config.record_hotkey = m_recHotkeyBuf;
+            m_dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hotkey to start/stop recording (e.g. f8, ctrl+r)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Capture##rchk")) m_recHotkeyCapture = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Click then press a key combination");
     }
 
     ImGui::Separator();

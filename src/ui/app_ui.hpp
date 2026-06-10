@@ -49,6 +49,10 @@ private:
     char                   m_hotkeyBuf[64]{};
     bool                   m_hotkeyCapture = false;
 
+    // Recording hotkey
+    char                   m_recHotkeyBuf[64]{};
+    bool                   m_recHotkeyCapture = false;
+
     // Pixel trigger position picker
     bool          m_trigPickActive = false;
     StartTrigger* m_trigPickTarget = nullptr;

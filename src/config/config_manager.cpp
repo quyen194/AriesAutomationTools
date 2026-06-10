@@ -338,7 +338,8 @@ AppConfig ConfigManager::Load(const std::string& path) {
     }
 
     AppConfig cfg;
-    cfg.global_hotkey = root.value("global_hotkey", "F9");
+    cfg.global_hotkey  = root.value("global_hotkey",  "F9");
+    cfg.record_hotkey  = root.value("record_hotkey",  "");
 
     if (root.contains("workflows")) {
         for (auto& wj : root["workflows"])
@@ -351,6 +352,7 @@ AppConfig ConfigManager::Load(const std::string& path) {
 void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     json root;
     root["global_hotkey"] = config.global_hotkey;
+    root["record_hotkey"] = config.record_hotkey;
 
     json wfs = json::array();
     for (auto& w : config.workflows) wfs.push_back(SerializeWorkflow(w));

@@ -25,6 +25,7 @@ private:
 
     RecordEngine*          m_engineRef = nullptr;
     std::vector<Activity>  m_captured;
+    std::vector<bool>      m_reviewSelected;  // per-activity accept checkbox
 
     std::vector<Activity> ApplyFilters(std::vector<Activity> acts,
                                        const std::vector<RecordedEvent>& evs) const;

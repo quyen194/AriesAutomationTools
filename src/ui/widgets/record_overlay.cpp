@@ -37,10 +37,11 @@ std::vector<Activity> RecordOverlayWidget::ApplyFilters(
 }
 
 void RecordOverlayWidget::TriggerReview(RecordEngine& engine) {
-    m_engineRef  = &engine;
-    m_captured   = ApplyFilters(engine.ToActivities(m_captureTimings, m_fixedDelay),
-                                engine.Events());
-    m_showReview = true;
+    m_engineRef      = &engine;
+    m_captured        = ApplyFilters(engine.ToActivities(m_captureTimings, m_fixedDelay),
+                                     engine.Events());
+    m_reviewSelected.assign(m_captured.size(), true);
+    m_showReview     = true;
 }
 
 void RecordOverlayWidget::Render(RecordEngine& engine) {
@@ -73,17 +74,18 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
             ImGui::SetTooltip("Only keep mouse-move events where the cursor paused >= N ms");
         if (m_stopMoveMsEnabled) {
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(55);
-            ImGui::InputInt("ms##smmv", &m_stopMoveMsThreshold);
+            ImGui::SetNextItemWidth(72);
+            ImGui::InputInt("ms##smmv", &m_stopMoveMsThreshold, 0, 0);
             m_stopMoveMsThreshold = std::max(10, m_stopMoveMsThreshold);
         }
 
         if (ImGui::Button("[Stop]", ImVec2(-1, 0))) {
             engine.Stop();
-            m_engineRef  = &engine;
-            m_captured   = ApplyFilters(engine.ToActivities(m_captureTimings, m_fixedDelay),
-                                        engine.Events());
-            m_showReview = true;
+            m_engineRef       = &engine;
+            m_captured         = ApplyFilters(engine.ToActivities(m_captureTimings, m_fixedDelay),
+                                              engine.Events());
+            m_reviewSelected.assign(m_captured.size(), true);
+            m_showReview      = true;
         }
         ImGui::End();
 
@@ -110,8 +112,8 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
             ImGui::SetTooltip("Only keep mouse-move events where the cursor paused >= N ms");
         if (m_stopMoveMsEnabled) {
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(55);
-            if (ImGui::InputInt("ms##smmv2", &m_stopMoveMsThreshold)) regen = true;
+            ImGui::SetNextItemWidth(72);
+            if (ImGui::InputInt("ms##smmv2", &m_stopMoveMsThreshold, 0, 0)) regen = true;
             m_stopMoveMsThreshold = std::max(10, m_stopMoveMsThreshold);
         }
 
@@ -119,13 +121,35 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
             m_captured = ApplyFilters(
                 m_engineRef->ToActivities(m_captureTimings, m_fixedDelay),
                 m_engineRef->Events());
+            m_reviewSelected.assign(m_captured.size(), true);
         }
 
-        ImGui::Text("%d activities:", (int)m_captured.size());
+        // Select All / Deselect All
+        int acceptCount = 0;
+        for (bool b : m_reviewSelected) if (b) ++acceptCount;
+        ImGui::Text("%d / %d accepted:", acceptCount, (int)m_captured.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("All##rsel"))
+            std::fill(m_reviewSelected.begin(), m_reviewSelected.end(), true);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all activities");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("None##rsel"))
+            std::fill(m_reviewSelected.begin(), m_reviewSelected.end(), false);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deselect all activities");
+
         ImGui::BeginChild("##recacts", ImVec2(0, 150), true);
         for (int i = 0; i < (int)m_captured.size(); ++i) {
             ImGui::PushID(i);
             auto& a = m_captured[i];
+
+            // Accept checkbox
+            bool sel = (i < (int)m_reviewSelected.size()) ? m_reviewSelected[i] : true;
+            if (ImGui::Checkbox("##rsel", &sel)) {
+                if (i < (int)m_reviewSelected.size()) m_reviewSelected[i] = sel;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Include this activity when accepting");
+            ImGui::SameLine();
+
             auto getDelay = [](ActivityData& d) -> int& {
                 return std::visit([](auto&& v) -> int& {
                     using T = std::decay_t<decltype(v)>;
@@ -136,26 +160,38 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
                 }, d);
             };
             int& delayRef = getDelay(a.data);
+
+            if (!sel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f,0.45f,0.45f,1.f));
             ImGui::Text("%2d.", i + 1); ImGui::SameLine();
             ImGui::SetNextItemWidth(50);
             ImGui::InputInt("##dl", &delayRef, 0);
             delayRef = std::max(0, delayRef);
             ImGui::SameLine();
             ImGui::TextUnformatted(a.enabled ? "[on]" : "[off]");
+            if (!sel) ImGui::PopStyleColor();
+
             ImGui::PopID();
         }
         ImGui::EndChild();
 
         if (ImGui::Button("Accept##rec", ImVec2(115, 0))) {
-            if (OnFinished) OnFinished(m_captured);
+            // Only pass activities that are checked
+            std::vector<Activity> toAdd;
+            for (size_t k = 0; k < m_captured.size(); ++k) {
+                if (k < m_reviewSelected.size() && m_reviewSelected[k])
+                    toAdd.push_back(m_captured[k]);
+            }
+            if (OnFinished) OnFinished(toAdd);
             m_showReview = false;
             m_captured.clear();
+            m_reviewSelected.clear();
             m_engineRef  = nullptr;
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard##rec", ImVec2(115, 0))) {
             m_showReview = false;
             m_captured.clear();
+            m_reviewSelected.clear();
             m_engineRef  = nullptr;
         }
         ImGui::End();

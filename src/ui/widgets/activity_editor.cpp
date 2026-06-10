@@ -324,9 +324,11 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         }
 
         // Inline action buttons — visible only when this item is selected
+        // Keep ItemSpacing.y unchanged so the row height stays consistent
         if (isSelected) {
             ImGui::SameLine();
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                ImVec2(2.f, ImGui::GetStyle().ItemSpacing.y));
             if (ImGui::SmallButton(a.enabled ? "off##row" : "on##row")) {
                 a.enabled = !a.enabled;
                 if (OnChanged) OnChanged();
