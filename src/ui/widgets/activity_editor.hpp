@@ -17,6 +17,7 @@ private:
     // Multi-selection for batch ops
     std::vector<bool> m_selection;
     int m_lastScrolledStep = -1;
+    int m_lastClickedIdx   = -1;  // for shift-click range select
 
     // Coordinate picker state
     enum class PickStage { None, Single, DragFrom, DragTo };

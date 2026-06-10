@@ -200,8 +200,10 @@ void AppUI::RenderTopBar() {
     bool anyRunning = m_engine.AnyRunning();
 
     if (ImGui::Button(">> Start All")) m_engine.StartAll();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
     ImGui::SameLine();
     if (ImGui::Button("[Stop All]"))  m_engine.StopAll();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
     ImGui::SameLine();
     ImGui::Separator(); ImGui::SameLine();
 
@@ -246,6 +248,8 @@ void AppUI::RenderTopBar() {
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Capture##hk")) m_hotkeyCapture = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Click then press a key combination\n(Ctrl/Shift/Alt + key)");
     }
     ImGui::SameLine();
 
@@ -276,14 +280,17 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         { wf.name = nameBuf; m_dirty = true; }
     ImGui::SameLine();
     if (ImGui::Checkbox("Enabled", &wf.enabled)) m_dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable or disable this workflow");
 
     bool running = m_engine.IsRunning(wf.id);
     ImGui::SameLine();
     if (!running) {
         if (ImGui::Button(">> Start")) m_engine.StartWorkflow(wf.id);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start this workflow now");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
         if (ImGui::Button("[Stop]"))  m_engine.StopWorkflow(wf.id);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop this workflow");
         ImGui::PopStyleColor();
     }
 
@@ -300,16 +307,27 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     // Timing
     if (ImGui::InputInt("Repeat interval (ms)", &wf.repeat_interval_ms))
         { wf.repeat_interval_ms = std::max(100, wf.repeat_interval_ms); m_dirty = true; }
-    if (ImGui::InputInt("Repeat count (0=∞)", &wf.repeat_count))
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Wait this many ms between each run of the workflow");
+    if (ImGui::InputInt("Repeat count (0=inf)", &wf.repeat_count))
         { wf.repeat_count = std::max(0, wf.repeat_count); m_dirty = true; }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Number of times to run (0 = repeat forever until stopped)");
 
     // Smart detection
     if (ImGui::Checkbox("Smart detection", &wf.smart_detection)) m_dirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "Automatically pause the workflow when user activity is detected\n"
+            "(mouse movement or key press), then resume after the idle period.\n"
+            "Useful to avoid conflicts when you need to use the computer yourself.");
     if (wf.smart_detection) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         if (ImGui::InputInt("Idle ms##sd", &wf.smart_detection_idle_ms))
             { wf.smart_detection_idle_ms = std::max(100, wf.smart_detection_idle_ms); m_dirty = true; }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Resume the workflow after this many ms of user inactivity");
     }
 
     ImGui::Separator();
@@ -319,12 +337,17 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         if (ImGui::Button("[Rec]")) {
             m_recorder.Start();
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Start recording mouse and keyboard events.\n"
+                              "Set filter options in the overlay before stopping.");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
         if (ImGui::Button("[Stop Rec]")) {
             m_recorder.Stop();
             m_recOverlay.TriggerReview(m_recorder);
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Stop recording and open the review screen");
         ImGui::PopStyleColor();
     }
 
@@ -340,6 +363,10 @@ void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {
         wt.type = (WindowTarget::Type)typeIdx;
         m_dirty = true;
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Which window to bring to focus before executing activities.\n"
+                          "Global = no targeting (uses whatever window is active).\n"
+                          "By Title/Class = focus window matching the given property.");
     ImGui::SameLine();
     m_winPicker.Render(m_engine.WindowFinder(), wt);
 
@@ -367,8 +394,8 @@ void AppUI::RenderTriggerPickOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pos = io.MousePos;
     pos.x += 16.f; pos.y += 16.f;
-    if (pos.x + 220 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 220;
-    if (pos.y + 70  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 70;
+    if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
+    if (pos.y + 90  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 90;
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -381,6 +408,25 @@ void AppUI::RenderTriggerPickOverlay() {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick pixel pos: %d, %d", gx, gy);
+
+        // Show live pixel color under cursor
+#if defined(_WIN32)
+        {
+            HDC dc = GetDC(nullptr);
+            if (dc) {
+                COLORREF c = GetPixel(dc, gx, gy);
+                ReleaseDC(nullptr, dc);
+                if (c != CLR_INVALID) {
+                    float r = GetRValue(c)/255.f, g2 = GetGValue(c)/255.f, b = GetBValue(c)/255.f;
+                    ImGui::ColorButton("##trigclr", ImVec4(r, g2, b, 1.f),
+                        ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
+                        ImVec2(14, 14));
+                    ImGui::SameLine();
+                    ImGui::Text("#%02X%02X%02X", GetRValue(c), GetGValue(c), GetBValue(c));
+                }
+            }
+        }
+#endif
         ImGui::TextDisabled("Enter = confirm   Esc = cancel");
 
         if (ImGui::Button("Capture##trigpick") ||
@@ -388,6 +434,21 @@ void AppUI::RenderTriggerPickOverlay() {
             if (m_trigPickTarget) {
                 m_trigPickTarget->pixel_x = gx;
                 m_trigPickTarget->pixel_y = gy;
+#if defined(_WIN32)
+                {
+                    HDC dc = GetDC(nullptr);
+                    if (dc) {
+                        COLORREF c = GetPixel(dc, gx, gy);
+                        ReleaseDC(nullptr, dc);
+                        if (c != CLR_INVALID) {
+                            m_trigPickTarget->pixel_color =
+                                ((uint32_t)GetRValue(c) << 16) |
+                                ((uint32_t)GetGValue(c) << 8)  |
+                                 (uint32_t)GetBValue(c);
+                        }
+                    }
+                }
+#endif
                 m_dirty = true;
             }
             m_trigPickActive = false;
@@ -409,6 +470,11 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         trig.type = (StartTrigger::Type)typeIdx;
         m_dirty = true;
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How this workflow is started:\n"
+                          "Manual = click Start or use hotkey\n"
+                          "Schedule = run on a cron schedule\n"
+                          "Pixel color = run when a screen pixel matches a color");
 
     if (trig.type == StartTrigger::Type::Schedule) {
         // Track per-workflow to reinitialize buffers on switch
@@ -505,6 +571,8 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
             m_trigPickActive = true;
             m_trigPickTarget = &trig;
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Click, then hover over the target pixel;\nposition and color are captured automatically");
 
         float col[3] = {
             ((trig.pixel_color>>16)&0xFF)/255.f,
@@ -517,8 +585,13 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
                                 (uint32_t)(col[2]*255);
             m_dirty = true;
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target pixel color to match");
         ImGui::InputInt("Tolerance##tr", &trig.pixel_tolerance);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Allowed color difference per channel (0 = exact match, 255 = any color)");
         ImGui::InputInt("Poll interval (ms)##tr", &trig.pixel_poll_ms);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How often to check the pixel color in milliseconds");
     }
 }
 

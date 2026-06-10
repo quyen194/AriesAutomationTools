@@ -1,3 +1,8 @@
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#endif
 #include "activity_editor.hpp"
 #include "imgui.h"
 #include <SDL.h>
@@ -19,7 +24,7 @@ static std::string GenId() {
     return ss.str();
 }
 
-// ── ImGui key -> key name string (matches key_map.cpp names) ─────────────────
+// ── ImGui key -> key name string ──────────────────────────────────────────────
 static std::string ImGuiKeyToKeyName(ImGuiKey key) {
     switch (key) {
         case ImGuiKey_Tab:          return "tab";
@@ -43,38 +48,23 @@ static std::string ImGuiKeyToKeyName(ImGuiKey key) {
         case ImGuiKey_RightCtrl:    return "rctrl";
         case ImGuiKey_RightShift:   return "rshift";
         case ImGuiKey_RightAlt:     return "ralt";
-        case ImGuiKey_F1:           return "f1";
-        case ImGuiKey_F2:           return "f2";
-        case ImGuiKey_F3:           return "f3";
-        case ImGuiKey_F4:           return "f4";
-        case ImGuiKey_F5:           return "f5";
-        case ImGuiKey_F6:           return "f6";
-        case ImGuiKey_F7:           return "f7";
-        case ImGuiKey_F8:           return "f8";
-        case ImGuiKey_F9:           return "f9";
-        case ImGuiKey_F10:          return "f10";
-        case ImGuiKey_F11:          return "f11";
-        case ImGuiKey_F12:          return "f12";
-        case ImGuiKey_Keypad0:      return "numpad0";
-        case ImGuiKey_Keypad1:      return "numpad1";
-        case ImGuiKey_Keypad2:      return "numpad2";
-        case ImGuiKey_Keypad3:      return "numpad3";
-        case ImGuiKey_Keypad4:      return "numpad4";
-        case ImGuiKey_Keypad5:      return "numpad5";
-        case ImGuiKey_Keypad6:      return "numpad6";
-        case ImGuiKey_Keypad7:      return "numpad7";
-        case ImGuiKey_Keypad8:      return "numpad8";
-        case ImGuiKey_Keypad9:      return "numpad9";
-        case ImGuiKey_KeypadEnter:  return "numpad_enter";
+        case ImGuiKey_F1:  return "f1";  case ImGuiKey_F2:  return "f2";
+        case ImGuiKey_F3:  return "f3";  case ImGuiKey_F4:  return "f4";
+        case ImGuiKey_F5:  return "f5";  case ImGuiKey_F6:  return "f6";
+        case ImGuiKey_F7:  return "f7";  case ImGuiKey_F8:  return "f8";
+        case ImGuiKey_F9:  return "f9";  case ImGuiKey_F10: return "f10";
+        case ImGuiKey_F11: return "f11"; case ImGuiKey_F12: return "f12";
+        case ImGuiKey_Keypad0: return "numpad0"; case ImGuiKey_Keypad1: return "numpad1";
+        case ImGuiKey_Keypad2: return "numpad2"; case ImGuiKey_Keypad3: return "numpad3";
+        case ImGuiKey_Keypad4: return "numpad4"; case ImGuiKey_Keypad5: return "numpad5";
+        case ImGuiKey_Keypad6: return "numpad6"; case ImGuiKey_Keypad7: return "numpad7";
+        case ImGuiKey_Keypad8: return "numpad8"; case ImGuiKey_Keypad9: return "numpad9";
+        case ImGuiKey_KeypadEnter: return "numpad_enter";
         default: {
-            if (key >= ImGuiKey_A && key <= ImGuiKey_Z) {
-                char c = 'a' + (char)(key - ImGuiKey_A);
-                return std::string(1, c);
-            }
-            if (key >= ImGuiKey_0 && key <= ImGuiKey_9) {
-                char c = '0' + (char)(key - ImGuiKey_0);
-                return std::string(1, c);
-            }
+            if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+                return std::string(1, (char)('a' + (key - ImGuiKey_A)));
+            if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+                return std::string(1, (char)('0' + (key - ImGuiKey_0)));
             return {};
         }
     }
@@ -110,8 +100,8 @@ static ActivityData DefaultData(int idx) {
     }
 }
 
-static const char* BtnNames[]        = {"left","right","middle"};
-static const char* PosModeNames[]    = {"absolute","relative"};
+static const char* BtnNames[]         = {"left","right","middle"};
+static const char* PosModeNames[]     = {"absolute","relative"};
 static const char* PixelActionNames[] = {"retry","skip_iteration","stop_workflow"};
 
 // ── Short summary for list row ────────────────────────────────────────────────
@@ -150,10 +140,12 @@ static std::string ActivitySummary(const Activity& a) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
-    // Sync selection vector length
     m_selection.resize(wf.activities.size(), false);
+    ImGuiIO& io = ImGui::GetIO();
 
+    // ── Header: count + Add button ────────────────────────────────────────────
     ImGui::Text("Activities (%d)", (int)wf.activities.size());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sequence of actions executed in order");
     ImGui::SameLine();
     if (ImGui::Button("+ Add##act")) {
         m_draft            = Activity{GenId(), true, MouseClickActivity{}};
@@ -163,100 +155,283 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         m_scrollCapture    = false;
         m_pickStage        = PickStage::None;
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a new activity");
 
-    // ── Batch operations bar ──────────────────────────────────────────────────
+    // ── Batch ops bar ─────────────────────────────────────────────────────────
     {
-        int total = (int)wf.activities.size();
+        int total    = (int)wf.activities.size();
         int selCount = 0;
         for (bool b : m_selection) if (b) ++selCount;
 
         bool allSel = (total > 0 && selCount == total);
         if (ImGui::Checkbox("##selAll", &allSel)) {
             std::fill(m_selection.begin(), m_selection.end(), allSel);
+            if (!allSel) m_lastClickedIdx = -1;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all");
-        ImGui::SameLine();
 
-        bool hasSelection = selCount > 0;
-        if (!hasSelection) ImGui::BeginDisabled();
-
-        if (ImGui::SmallButton("Del Sel")) {
-            for (int i = total - 1; i >= 0; --i)
-                if (m_selection[i]) wf.activities.erase(wf.activities.begin() + i);
-            m_selection.clear();
-            m_editIdx = -1;
-            if (OnChanged) OnChanged();
+        if (selCount > 0) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Del##bsel")) {
+                for (int i = total - 1; i >= 0; --i)
+                    if (m_selection[i]) wf.activities.erase(wf.activities.begin() + i);
+                m_selection.clear();
+                m_editIdx = -1;
+                if (OnChanged) OnChanged();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete selected activities");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("On##bsel")) {
+                for (int i = 0; i < (int)wf.activities.size(); ++i)
+                    if (i < (int)m_selection.size() && m_selection[i])
+                        wf.activities[i].enabled = true;
+                if (OnChanged) OnChanged();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable selected activities");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Off##bsel")) {
+                for (int i = 0; i < (int)wf.activities.size(); ++i)
+                    if (i < (int)m_selection.size() && m_selection[i])
+                        wf.activities[i].enabled = false;
+                if (OnChanged) OnChanged();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Disable selected activities");
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d sel)", selCount);
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Enable Sel")) {
-            for (int i = 0; i < (int)wf.activities.size(); ++i)
-                if (m_selection[i]) wf.activities[i].enabled = true;
-            if (OnChanged) OnChanged();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Disable Sel")) {
-            for (int i = 0; i < (int)wf.activities.size(); ++i)
-                if (m_selection[i]) wf.activities[i].enabled = false;
-            if (OnChanged) OnChanged();
-        }
-
-        if (!hasSelection) ImGui::EndDisabled();
     }
 
+    // Deferred per-item operations from context menu / inline buttons
+    int ctxDeleteIdx  = -1;
+    int ctxEnableIdx  = -1;
+    int ctxDisableIdx = -1;
+    int ctxMoveUp     = -1;
+    int ctxMoveDown   = -1;
+
     ImGui::BeginChild("##actlist", ImVec2(0, -60), true);
+
     for (int i = 0; i < (int)wf.activities.size(); ++i) {
         auto& a = wf.activities[i];
         ImGui::PushID(i);
 
-        // Multi-select checkbox
-        bool sel = (i < (int)m_selection.size()) ? m_selection[i] : false;
-        if (ImGui::Checkbox("##sel", &sel)) {
-            if (i < (int)m_selection.size()) m_selection[i] = sel;
-        }
-        ImGui::SameLine();
+        bool isSelected = (i < (int)m_selection.size()) && m_selection[i];
+        bool isCurrent  = (currentStep == i);
 
-        bool en = a.enabled;
-        if (ImGui::Checkbox("##en", &en)) { a.enabled = en; if (OnChanged) OnChanged(); }
-        ImGui::SameLine();
-
-        bool isCurrent = (currentStep == i);
-
-        // Auto-scroll to current step when it changes
+        // Auto-scroll to current running step
         if (isCurrent && currentStep != m_lastScrolledStep) {
             ImGui::SetScrollHereY(0.5f);
             m_lastScrolledStep = currentStep;
         }
 
-        char label[256];
-        snprintf(label, sizeof(label), "%2d. %s", i+1, ActivitySummary(a).c_str());
-
+        // Green highlight for currently running step
         if (isCurrent) {
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.1f,0.65f,0.1f,0.90f));
         }
-        if (ImGui::Selectable(label, isCurrent, ImGuiSelectableFlags_AllowOverlap)) {
-            m_draft            = a;
-            m_editIdx          = i;
-            m_openModal        = true;
-            m_keyCaptureActive = false;
-            m_scrollCapture    = false;
-            m_pickStage        = PickStage::None;
-        }
-        if (isCurrent) ImGui::PopStyleColor(3);
+        // Dim text for disabled activities (but not for the running step)
+        if (!a.enabled && !isCurrent)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1.f));
 
-        ImGui::SameLine();
-        RenderMoveButtons(wf, i);
+        char label[256];
+        snprintf(label, sizeof(label), "%2d. %s", i+1, ActivitySummary(a).c_str());
+
+        bool highlighted = isSelected || isCurrent;
+        ImGuiSelectableFlags selFlags =
+            ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick;
+        if (ImGui::Selectable(label, highlighted, selFlags)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                // Double-click: open edit modal
+                m_draft            = a;
+                m_editIdx          = i;
+                m_openModal        = true;
+                m_keyCaptureActive = false;
+                m_scrollCapture    = false;
+                m_pickStage        = PickStage::None;
+            } else {
+                // Single-click: selection logic
+                if (io.KeyShift && m_lastClickedIdx >= 0) {
+                    // Range select
+                    std::fill(m_selection.begin(), m_selection.end(), false);
+                    int lo = std::min(i, m_lastClickedIdx);
+                    int hi = std::max(i, m_lastClickedIdx);
+                    for (int j = lo; j <= hi && j < (int)m_selection.size(); ++j)
+                        m_selection[j] = true;
+                } else if (io.KeyCtrl) {
+                    // Toggle select
+                    if (i < (int)m_selection.size()) m_selection[i] = !m_selection[i];
+                    m_lastClickedIdx = i;
+                } else {
+                    // Single select
+                    std::fill(m_selection.begin(), m_selection.end(), false);
+                    if (i < (int)m_selection.size()) m_selection[i] = true;
+                    m_lastClickedIdx = i;
+                }
+            }
+        }
+        if (!a.enabled && !isCurrent) ImGui::PopStyleColor();
+        if (isCurrent)               ImGui::PopStyleColor(3);
+
+        // Drag-drop source (drag to reorder)
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            ImGui::SetDragDropPayload("ACT_IDX", &i, sizeof(int));
+            auto s = ActivitySummary(a);
+            if (s.size() > 28) s = s.substr(0, 28) + "..";
+            ImGui::Text("Move %d. %s", i+1, s.c_str());
+            ImGui::EndDragDropSource();
+        }
+        // Drag-drop target
+        if (ImGui::BeginDragDropTarget()) {
+            if (auto* p = ImGui::AcceptDragDropPayload("ACT_IDX")) {
+                int src = *(const int*)p->Data;
+                if (src != i) {
+                    Activity moved = wf.activities[src];
+                    wf.activities.erase(wf.activities.begin() + src);
+                    int dst = (src < i) ? i - 1 : i;
+                    wf.activities.insert(wf.activities.begin() + dst, moved);
+                    m_selection.clear();
+                    m_selection.resize(wf.activities.size(), false);
+                    if (dst < (int)m_selection.size()) m_selection[dst] = true;
+                    m_lastClickedIdx = dst;
+                    if (OnChanged) OnChanged();
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        // Right-click context menu
+        if (ImGui::BeginPopupContextItem("##ctx")) {
+            if (ImGui::MenuItem("Edit")) {
+                m_draft            = a;
+                m_editIdx          = i;
+                m_openModal        = true;
+                m_keyCaptureActive = false;
+                m_scrollCapture    = false;
+                m_pickStage        = PickStage::None;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Move Up",   "Ctrl+Up",   false, i > 0))
+                ctxMoveUp = i;
+            if (ImGui::MenuItem("Move Down", "Ctrl+Down", false, i < (int)wf.activities.size()-1))
+                ctxMoveDown = i;
+            ImGui::Separator();
+            if (ImGui::MenuItem(a.enabled ? "Disable" : "Enable")) {
+                if (a.enabled) ctxDisableIdx = i; else ctxEnableIdx = i;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete")) ctxDeleteIdx = i;
+            ImGui::EndPopup();
+        }
+
+        // Inline action buttons — visible only when this item is selected
+        if (isSelected) {
+            ImGui::SameLine();
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
+            if (ImGui::SmallButton(a.enabled ? "off##row" : "on##row")) {
+                a.enabled = !a.enabled;
+                if (OnChanged) OnChanged();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(a.enabled ? "Disable this activity" : "Enable this activity");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X##row")) ctxDeleteIdx = i;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this activity");
+            ImGui::PopStyleVar();
+        }
 
         ImGui::PopID();
     }
+
     // Reset scroll tracking when workflow stops
     if (currentStep < 0) m_lastScrolledStep = -1;
+
+    // Process deferred operations (safe: loop is finished)
+    if (ctxMoveUp >= 1 && ctxMoveUp < (int)wf.activities.size()) {
+        std::swap(wf.activities[ctxMoveUp], wf.activities[ctxMoveUp - 1]);
+        if (ctxMoveUp   < (int)m_selection.size() &&
+            ctxMoveUp-1 < (int)m_selection.size())
+            std::swap(m_selection[ctxMoveUp], m_selection[ctxMoveUp - 1]);
+        if (OnChanged) OnChanged();
+    }
+    if (ctxMoveDown >= 0 && ctxMoveDown + 1 < (int)wf.activities.size()) {
+        std::swap(wf.activities[ctxMoveDown], wf.activities[ctxMoveDown + 1]);
+        if (ctxMoveDown   < (int)m_selection.size() &&
+            ctxMoveDown+1 < (int)m_selection.size())
+            std::swap(m_selection[ctxMoveDown], m_selection[ctxMoveDown + 1]);
+        if (OnChanged) OnChanged();
+    }
+    if (ctxEnableIdx >= 0 && ctxEnableIdx < (int)wf.activities.size()) {
+        wf.activities[ctxEnableIdx].enabled = true;
+        if (OnChanged) OnChanged();
+    }
+    if (ctxDisableIdx >= 0 && ctxDisableIdx < (int)wf.activities.size()) {
+        wf.activities[ctxDisableIdx].enabled = false;
+        if (OnChanged) OnChanged();
+    }
+    if (ctxDeleteIdx >= 0 && ctxDeleteIdx < (int)wf.activities.size()) {
+        wf.activities.erase(wf.activities.begin() + ctxDeleteIdx);
+        m_selection.clear();
+        m_editIdx = -1;
+        if (OnChanged) OnChanged();
+    }
+
+    // Keyboard navigation (active when the list child window is focused)
+    if (ImGui::IsWindowFocused()) {
+        int n = (int)wf.activities.size();
+        if (n > 0 && !io.WantTextInput) {
+            int firstSel = -1, lastSel = -1, selCount = 0;
+            for (int j = 0; j < (int)m_selection.size(); ++j) {
+                if (m_selection[j]) {
+                    if (firstSel < 0) firstSel = j;
+                    lastSel = j;
+                    ++selCount;
+                }
+            }
+
+            bool up   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true);
+            bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true);
+
+            if (io.KeyCtrl && selCount == 1 && firstSel >= 0) {
+                // Ctrl+Up/Down: move the selected item
+                if (up && firstSel > 0) {
+                    std::swap(wf.activities[firstSel], wf.activities[firstSel - 1]);
+                    std::swap(m_selection[firstSel], m_selection[firstSel - 1]);
+                    m_lastClickedIdx = firstSel - 1;
+                    if (OnChanged) OnChanged();
+                } else if (down && lastSel < n - 1) {
+                    std::swap(wf.activities[lastSel], wf.activities[lastSel + 1]);
+                    std::swap(m_selection[lastSel], m_selection[lastSel + 1]);
+                    m_lastClickedIdx = lastSel + 1;
+                    if (OnChanged) OnChanged();
+                }
+            } else if (!io.KeyCtrl) {
+                // Arrow: navigate selection; Shift+Arrow: extend selection
+                if (up && firstSel > 0) {
+                    if (!io.KeyShift)
+                        std::fill(m_selection.begin(), m_selection.end(), false);
+                    m_selection[firstSel - 1] = true;
+                    if (!io.KeyShift) m_lastClickedIdx = firstSel - 1;
+                }
+                if (down && lastSel >= 0 && lastSel < n - 1) {
+                    if (!io.KeyShift)
+                        std::fill(m_selection.begin(), m_selection.end(), false);
+                    m_selection[lastSel + 1] = true;
+                    if (!io.KeyShift) m_lastClickedIdx = lastSel + 1;
+                }
+                // If nothing selected yet, select first item on Down
+                if (down && firstSel < 0 && n > 0) {
+                    m_selection[0] = true;
+                    m_lastClickedIdx = 0;
+                }
+            }
+        }
+    }
+
     ImGui::EndChild();
 
     ImGui::Separator();
 
-    // Pick overlay is rendered here (outside the modal) when active
+    // Pick overlay (rendered outside the modal when active)
     if (m_pickStage != PickStage::None) {
         RenderPickOverlay();
     }
@@ -268,14 +443,13 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     RenderModal(wf);
 }
 
-// ── Coordinate picker overlay ─────────────────────────────────────────────────
+// ── Coordinate + color picker overlay ────────────────────────────────────────
 void ActivityEditorWidget::RenderPickOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pos = io.MousePos;
     pos.x += 16.f; pos.y += 16.f;
-    // Keep overlay on screen
-    if (pos.x + 220 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 220;
-    if (pos.y + 80  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 80;
+    if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
+    if (pos.y + 100 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 100;
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -288,8 +462,29 @@ void ActivityEditorWidget::RenderPickOverlay() {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
 
-        const char* label = (m_pickStage == PickStage::DragTo) ? "Pick end pos" : "Pick pos";
-        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", label, gx, gy);
+        const char* lbl = (m_pickStage == PickStage::DragTo) ? "Pick end pos" : "Pick pos";
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
+
+        // Show live pixel color when picking for PixelCheckActivity
+        bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data);
+        if (isPixelPick) {
+#if defined(_WIN32)
+            HDC dc = GetDC(nullptr);
+            if (dc) {
+                COLORREF c = GetPixel(dc, gx, gy);
+                ReleaseDC(nullptr, dc);
+                if (c != CLR_INVALID) {
+                    float r = GetRValue(c)/255.f, g2 = GetGValue(c)/255.f, b = GetBValue(c)/255.f;
+                    ImGui::ColorButton("##pcol", ImVec4(r, g2, b, 1.f),
+                        ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
+                        ImVec2(14, 14));
+                    ImGui::SameLine();
+                    ImGui::Text("#%02X%02X%02X", GetRValue(c), GetGValue(c), GetBValue(c));
+                }
+            }
+#endif
+        }
+
         ImGui::TextDisabled("Enter = confirm   Esc = cancel");
 
         if (ImGui::Button("Capture##pick") || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
@@ -311,6 +506,21 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
                       std::is_same_v<T,MouseClickActivity>  ||
                       std::is_same_v<T,MouseScrollActivity>) {
             v.x = x; v.y = y;
+        } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
+            v.x = x; v.y = y;
+            // Also capture the pixel color at this position
+#if defined(_WIN32)
+            HDC dc = GetDC(nullptr);
+            if (dc) {
+                COLORREF c = GetPixel(dc, x, y);
+                ReleaseDC(nullptr, dc);
+                if (c != CLR_INVALID) {
+                    v.color_rgb = ((uint32_t)GetRValue(c) << 16) |
+                                  ((uint32_t)GetGValue(c) << 8)  |
+                                   (uint32_t)GetBValue(c);
+                }
+            }
+#endif
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             if (m_pickStage == PickStage::DragFrom) {
                 v.from_x = x; v.from_y = y;
@@ -330,27 +540,8 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ActivityEditorWidget::RenderMoveButtons(Workflow& wf, int idx) {
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2,0));
-    if (ImGui::SmallButton("^") && idx > 0) {
-        std::swap(wf.activities[idx], wf.activities[idx-1]);
-        if (OnChanged) OnChanged();
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("v") && idx < (int)wf.activities.size()-1) {
-        std::swap(wf.activities[idx], wf.activities[idx+1]);
-        if (OnChanged) OnChanged();
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("X")) {
-        wf.activities.erase(wf.activities.begin() + idx);
-        if (OnChanged) OnChanged();
-    }
-    ImGui::PopStyleVar();
-}
-
 void ActivityEditorWidget::RenderModal(Workflow& wf) {
-    ImGui::SetNextWindowSize(ImVec2(480, 540), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(480, 560), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("##actmodal", nullptr, ImGuiWindowFlags_NoResize)) return;
 
     ImGui::Text(m_editIdx < 0 ? "Add Activity" : "Edit Activity");
@@ -363,7 +554,11 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
         m_scrollCapture    = false;
         m_scrollAccum      = 0.f;
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Type of action to perform");
     ImGui::Checkbox("Enabled", &m_draft.enabled);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Uncheck to skip this activity without deleting it");
     ImGui::Separator();
 
     RenderActivityFields(m_draft.data);
@@ -398,19 +593,26 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             int idx = (pm == PositionMode::Relative) ? 1 : 0;
             if (ImGui::Combo("Position mode", &idx, PosModeNames, 2))
                 pm = idx == 1 ? PositionMode::Relative : PositionMode::Absolute;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Absolute = global screen coordinates\n"
+                                  "Relative = offset from the target window's origin");
         };
         auto btnCombo = [](MouseButton& b) {
             int idx = (b == MouseButton::Right) ? 1 : (b == MouseButton::Middle) ? 2 : 0;
             if (ImGui::Combo("Button", &idx, BtnNames, 3))
                 b = (MouseButton)idx;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Which mouse button to click");
         };
         auto delayFields = [](int& dm, int& dr) {
             ImGui::InputInt("Delay after (ms)", &dm);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before executing the next activity");
             ImGui::InputInt("Random range (ms)", &dr);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add a random delay of 0 to N ms (makes timing less predictable)");
             dm = std::max(0, dm); dr = std::max(0, dr);
         };
-
-        // Helper: XY fields then Pick button on next line
         auto xyPick = [this](int& x, int& y, PickStage stage) {
             ImGui::InputInt("X", &x);
             ImGui::InputInt("Y", &y);
@@ -418,6 +620,8 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 m_pickStage = stage;
                 ImGui::CloseCurrentPopup();
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click, then hover to pick a screen position");
         };
 
         if constexpr (std::is_same_v<T,MouseMoveActivity>) {
@@ -430,34 +634,39 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             xyPick(v.x, v.y, PickStage::Single);
             btnCombo(v.button);
             ImGui::Checkbox("Double click", &v.double_click);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Send a double-click instead of a single click");
             delayFields(v.delay_ms, v.delay_rand_ms);
 
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             posMode(v.pos_mode);
-
             ImGui::InputInt("From X", &v.from_x);
             ImGui::InputInt("From Y", &v.from_y);
             if (ImGui::Button("Pick start##dfs")) {
                 m_pickStage = PickStage::DragFrom;
                 ImGui::CloseCurrentPopup();
             }
-
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag start position");
             ImGui::InputInt("To X", &v.to_x);
             ImGui::InputInt("To Y", &v.to_y);
             if (ImGui::Button("Pick end##dfe")) {
                 m_pickStage = PickStage::DragTo;
                 ImGui::CloseCurrentPopup();
             }
-
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag end position");
             btnCombo(v.button);
             ImGui::InputInt("Duration (ms)", &v.duration_ms);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the drag motion takes");
             v.duration_ms = std::max(1, v.duration_ms);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,MouseScrollActivity>) {
             posMode(v.pos_mode);
             xyPick(v.x, v.y, PickStage::Single);
             ImGui::InputInt("Delta X", &v.delta_x);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Horizontal scroll amount");
 
             if (m_scrollCapture) {
                 m_scrollAccum += ImGui::GetIO().MouseWheel;
@@ -475,39 +684,38 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 }
             } else {
                 ImGui::InputInt("Delta Y", &v.delta_y);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Vertical scroll amount (positive = up, negative = down)");
                 if (ImGui::Button("Capture scroll##sc")) {
                     m_scrollCapture = true;
                     m_scrollAccum   = 0.f;
                 }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Scroll your mouse wheel to capture the delta");
             }
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,KeyPressActivity>) {
             if (m_keyCaptureActive) {
                 ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press any key... (Esc to cancel)");
-
                 for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
                     ImGuiKey key = (ImGuiKey)k;
                     if (!ImGui::IsKeyPressed(key, false)) continue;
-
-                    if (key == ImGuiKey_Escape) {
-                        m_keyCaptureActive = false;
-                        break;
-                    }
-                    // Skip modifier-only presses — wait for a regular key
+                    if (key == ImGuiKey_Escape) { m_keyCaptureActive = false; break; }
                     if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
                         key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
                         key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
                         key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
-
                     auto name = ImGuiKeyToKeyName(key);
                     if (!name.empty()) {
                         v.key = name;
                         v.modifiers.clear();
-                        ImGuiIO& io = ImGui::GetIO();
-                        if (io.KeyCtrl)  v.modifiers.push_back("ctrl");
-                        if (io.KeyShift) v.modifiers.push_back("shift");
-                        if (io.KeyAlt)   v.modifiers.push_back("alt");
+                        ImGuiIO& kio = ImGui::GetIO();
+                        if (kio.KeyCtrl)  v.modifiers.push_back("ctrl");
+                        if (kio.KeyShift) v.modifiers.push_back("shift");
+                        if (kio.KeyAlt)   v.modifiers.push_back("alt");
                         m_keyCaptureActive = false;
                     }
                     break;
@@ -518,8 +726,8 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 if (ImGui::InputText("Key##kp", keyBuf, sizeof(keyBuf))) v.key = keyBuf;
                 ImGui::TextDisabled("e.g. space, f1, a, enter");
                 if (ImGui::Button("Capture key##kp")) m_keyCaptureActive = true;
-
-                // Show current modifiers
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Click then press a key (hold Ctrl/Shift/Alt for modifiers)");
                 ImGui::Text("Modifiers:");
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", v.modifiers.empty() ? "(none)" : [&]{
@@ -527,7 +735,6 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                     for (auto& m : v.modifiers) s += m + " ";
                     return s;
                 }().c_str());
-                ImGui::TextDisabled("(hold Ctrl/Shift/Alt while pressing Capture key)");
             }
             delayFields(v.delay_ms, v.delay_rand_ms);
 
@@ -536,19 +743,34 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             strncpy(textBuf, v.text.c_str(), sizeof(textBuf)-1);
             if (ImGui::InputTextMultiline("Text", textBuf, sizeof(textBuf), ImVec2(0,80)))
                 v.text = textBuf;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Text to type character by character");
             ImGui::InputInt("Char delay (ms)", &v.delay_between_chars_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Delay between each typed character");
             v.delay_between_chars_ms = std::max(0, v.delay_between_chars_ms);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,WaitActivity>) {
             ImGui::InputInt("Duration (ms)", &v.duration_ms);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long to wait");
             ImGui::InputInt("Random range (ms)", &v.random_range_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add a random extra delay of 0 to N ms");
             v.duration_ms     = std::max(0, v.duration_ms);
             v.random_range_ms = std::max(0, v.random_range_ms);
 
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
             posMode(v.pos_mode);
             ImGui::InputInt("X", &v.x); ImGui::InputInt("Y", &v.y);
+            if (ImGui::Button("Pick position##pcx")) {
+                m_pickStage = PickStage::Single;
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click to hover over screen; also captures the pixel color");
 
             float col[3] = {
                 ((v.color_rgb>>16)&0xFF)/255.f,
@@ -560,23 +782,39 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                               ((uint32_t)(col[1]*255)<< 8) |
                                (uint32_t)(col[2]*255);
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Target pixel color to match");
             ImGui::InputInt("Tolerance", &v.tolerance);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
             v.tolerance = std::max(0, std::min(255, v.tolerance));
 
             int actionIdx = (v.on_no_match == PixelCheckAction::SkipIteration) ? 1
                           : (v.on_no_match == PixelCheckAction::StopWorkflow)   ? 2 : 0;
             if (ImGui::Combo("On no match", &actionIdx, PixelActionNames, 3))
                 v.on_no_match = (PixelCheckAction)actionIdx;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("What to do if the pixel color does not match");
             ImGui::InputInt("Retry interval (ms)", &v.retry_interval_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How often to re-check the pixel when retrying");
             ImGui::InputInt("Retry timeout (ms, 0=inf)", &v.retry_timeout_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,RunWorkflowActivity>) {
             static char idBuf[64]{};
             strncpy(idBuf, v.workflow_id.c_str(), sizeof(idBuf)-1);
             if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf)))
                 v.workflow_id = idBuf;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("ID of the workflow to run as a sub-workflow");
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
         }
     }, data);
 }
