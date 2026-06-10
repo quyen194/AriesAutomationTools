@@ -16,7 +16,7 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
-        ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGuiWindowFlags_NoSavedSettings;
 
     if (engine.IsRecording()) {
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.7f,0.1f,0.1f,1.f));
