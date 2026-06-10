@@ -1,16 +1,22 @@
 #pragma once
 #include "core/workflow.hpp"
 #include <functional>
+#include <vector>
 
 struct ActivityEditorWidget {
     std::function<void()> OnChanged;
 
-    void Render(Workflow& wf);
+    // currentStep: index of the currently executing activity (-1 = not running)
+    void Render(Workflow& wf, int currentStep = -1);
 
 private:
     int  m_editIdx   = -1;
     bool m_openModal = false;
     Activity m_draft;
+
+    // Multi-selection for batch ops
+    std::vector<bool> m_selection;
+    int m_lastScrolledStep = -1;
 
     // Coordinate picker state
     enum class PickStage { None, Single, DragFrom, DragTo };

@@ -46,7 +46,8 @@ private:
     WindowPickerWidget     m_winPicker;
     RecordOverlayWidget    m_recOverlay;
 
-    char                   m_hotkeyBuf[32]{};
+    char                   m_hotkeyBuf[64]{};
+    bool                   m_hotkeyCapture = false;
 
     // Pixel trigger position picker
     bool          m_trigPickActive = false;

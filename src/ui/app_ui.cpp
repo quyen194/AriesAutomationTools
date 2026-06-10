@@ -6,6 +6,48 @@
 #include <random>
 #include <iomanip>
 
+// ── ImGui key -> key name (for hotkey capture) ────────────────────────────────
+static std::string AppImGuiKeyToName(ImGuiKey key) {
+    switch (key) {
+        case ImGuiKey_Tab:        return "tab";
+        case ImGuiKey_LeftArrow:  return "left";
+        case ImGuiKey_RightArrow: return "right";
+        case ImGuiKey_UpArrow:    return "up";
+        case ImGuiKey_DownArrow:  return "down";
+        case ImGuiKey_PageUp:     return "prior";
+        case ImGuiKey_PageDown:   return "next";
+        case ImGuiKey_Home:       return "home";
+        case ImGuiKey_End:        return "end";
+        case ImGuiKey_Insert:     return "insert";
+        case ImGuiKey_Delete:     return "delete";
+        case ImGuiKey_Backspace:  return "backspace";
+        case ImGuiKey_Space:      return "space";
+        case ImGuiKey_Enter:      return "enter";
+        case ImGuiKey_Escape:     return "escape";
+        case ImGuiKey_F1:  return "f1";  case ImGuiKey_F2:  return "f2";
+        case ImGuiKey_F3:  return "f3";  case ImGuiKey_F4:  return "f4";
+        case ImGuiKey_F5:  return "f5";  case ImGuiKey_F6:  return "f6";
+        case ImGuiKey_F7:  return "f7";  case ImGuiKey_F8:  return "f8";
+        case ImGuiKey_F9:  return "f9";  case ImGuiKey_F10: return "f10";
+        case ImGuiKey_F11: return "f11"; case ImGuiKey_F12: return "f12";
+        case ImGuiKey_Keypad0: return "numpad0"; case ImGuiKey_Keypad1: return "numpad1";
+        case ImGuiKey_Keypad2: return "numpad2"; case ImGuiKey_Keypad3: return "numpad3";
+        case ImGuiKey_Keypad4: return "numpad4"; case ImGuiKey_Keypad5: return "numpad5";
+        case ImGuiKey_Keypad6: return "numpad6"; case ImGuiKey_Keypad7: return "numpad7";
+        case ImGuiKey_Keypad8: return "numpad8"; case ImGuiKey_Keypad9: return "numpad9";
+        case ImGuiKey_KeypadEnter: return "numpad_enter";
+        default: {
+            if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+                return std::string(1, (char)('a' + (key - ImGuiKey_A)));
+            if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+                return std::string(1, (char)('0' + (key - ImGuiKey_0)));
+            return {};
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 static std::string GenId() {
     static std::mt19937 rng{std::random_device{}()};
     std::uniform_int_distribution<uint32_t> d;
@@ -165,12 +207,45 @@ void AppUI::RenderTopBar() {
 
     // Global hotkey config
     ImGui::Text("Hotkey:"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(70);
-    if (ImGui::InputText("##hk", m_hotkeyBuf, sizeof(m_hotkeyBuf),
-                          ImGuiInputTextFlags_EnterReturnsTrue)) {
-        m_config.global_hotkey = m_hotkeyBuf;
-        m_engine.SetGlobalHotkey(m_config.global_hotkey);
-        m_dirty = true;
+    if (m_hotkeyCapture) {
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Cancel##hkc")) m_hotkeyCapture = false;
+
+        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+            ImGuiKey key = (ImGuiKey)k;
+            if (!ImGui::IsKeyPressed(key, false)) continue;
+            if (key == ImGuiKey_Escape) { m_hotkeyCapture = false; break; }
+            if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
+                key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
+                key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
+                key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
+            auto name = AppImGuiKeyToName(key);
+            if (!name.empty()) {
+                std::string hk;
+                ImGuiIO& io = ImGui::GetIO();
+                if (io.KeyCtrl)  hk += "ctrl+";
+                if (io.KeyShift) hk += "shift+";
+                if (io.KeyAlt)   hk += "alt+";
+                hk += name;
+                strncpy(m_hotkeyBuf, hk.c_str(), sizeof(m_hotkeyBuf)-1);
+                m_config.global_hotkey = hk;
+                m_engine.SetGlobalHotkey(hk);
+                m_dirty = true;
+                m_hotkeyCapture = false;
+            }
+            break;
+        }
+    } else {
+        ImGui::SetNextItemWidth(90);
+        if (ImGui::InputText("##hk", m_hotkeyBuf, sizeof(m_hotkeyBuf),
+                              ImGuiInputTextFlags_EnterReturnsTrue)) {
+            m_config.global_hotkey = m_hotkeyBuf;
+            m_engine.SetGlobalHotkey(m_config.global_hotkey);
+            m_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Capture##hk")) m_hotkeyCapture = true;
     }
     ImGui::SameLine();
 
@@ -254,7 +329,7 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     }
 
     ImGui::Separator();
-    m_actEditor.Render(wf);
+    m_actEditor.Render(wf, m_engine.CurrentActivityIndex(wf.id));
 }
 
 void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {

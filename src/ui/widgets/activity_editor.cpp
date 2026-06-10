@@ -149,7 +149,10 @@ static std::string ActivitySummary(const Activity& a) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ActivityEditorWidget::Render(Workflow& wf) {
+void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
+    // Sync selection vector length
+    m_selection.resize(wf.activities.size(), false);
+
     ImGui::Text("Activities (%d)", (int)wf.activities.size());
     ImGui::SameLine();
     if (ImGui::Button("+ Add##act")) {
@@ -161,18 +164,78 @@ void ActivityEditorWidget::Render(Workflow& wf) {
         m_pickStage        = PickStage::None;
     }
 
+    // ── Batch operations bar ──────────────────────────────────────────────────
+    {
+        int total = (int)wf.activities.size();
+        int selCount = 0;
+        for (bool b : m_selection) if (b) ++selCount;
+
+        bool allSel = (total > 0 && selCount == total);
+        if (ImGui::Checkbox("##selAll", &allSel)) {
+            std::fill(m_selection.begin(), m_selection.end(), allSel);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all");
+        ImGui::SameLine();
+
+        bool hasSelection = selCount > 0;
+        if (!hasSelection) ImGui::BeginDisabled();
+
+        if (ImGui::SmallButton("Del Sel")) {
+            for (int i = total - 1; i >= 0; --i)
+                if (m_selection[i]) wf.activities.erase(wf.activities.begin() + i);
+            m_selection.clear();
+            m_editIdx = -1;
+            if (OnChanged) OnChanged();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Enable Sel")) {
+            for (int i = 0; i < (int)wf.activities.size(); ++i)
+                if (m_selection[i]) wf.activities[i].enabled = true;
+            if (OnChanged) OnChanged();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Disable Sel")) {
+            for (int i = 0; i < (int)wf.activities.size(); ++i)
+                if (m_selection[i]) wf.activities[i].enabled = false;
+            if (OnChanged) OnChanged();
+        }
+
+        if (!hasSelection) ImGui::EndDisabled();
+    }
+
     ImGui::BeginChild("##actlist", ImVec2(0, -60), true);
     for (int i = 0; i < (int)wf.activities.size(); ++i) {
         auto& a = wf.activities[i];
         ImGui::PushID(i);
 
+        // Multi-select checkbox
+        bool sel = (i < (int)m_selection.size()) ? m_selection[i] : false;
+        if (ImGui::Checkbox("##sel", &sel)) {
+            if (i < (int)m_selection.size()) m_selection[i] = sel;
+        }
+        ImGui::SameLine();
+
         bool en = a.enabled;
         if (ImGui::Checkbox("##en", &en)) { a.enabled = en; if (OnChanged) OnChanged(); }
         ImGui::SameLine();
 
+        bool isCurrent = (currentStep == i);
+
+        // Auto-scroll to current step when it changes
+        if (isCurrent && currentStep != m_lastScrolledStep) {
+            ImGui::SetScrollHereY(0.5f);
+            m_lastScrolledStep = currentStep;
+        }
+
         char label[256];
         snprintf(label, sizeof(label), "%2d. %s", i+1, ActivitySummary(a).c_str());
-        if (ImGui::Selectable(label, false)) {
+
+        if (isCurrent) {
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.1f,0.65f,0.1f,0.90f));
+        }
+        if (ImGui::Selectable(label, isCurrent, ImGuiSelectableFlags_AllowOverlap)) {
             m_draft            = a;
             m_editIdx          = i;
             m_openModal        = true;
@@ -180,11 +243,15 @@ void ActivityEditorWidget::Render(Workflow& wf) {
             m_scrollCapture    = false;
             m_pickStage        = PickStage::None;
         }
+        if (isCurrent) ImGui::PopStyleColor(3);
+
         ImGui::SameLine();
         RenderMoveButtons(wf, i);
 
         ImGui::PopID();
     }
+    // Reset scroll tracking when workflow stops
+    if (currentStep < 0) m_lastScrolledStep = -1;
     ImGui::EndChild();
 
     ImGui::Separator();
