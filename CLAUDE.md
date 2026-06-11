@@ -5,6 +5,7 @@ This file provides session-start context for Claude Code. Read it before making 
 ## AI behavior rules
 
 - **Always commit after finishing any modification.** Include a detailed commit message: what files changed, what was added/fixed/refactored, and why. Use the imperative mood (e.g., "Fix …", "Add …", "Refactor …").
+- **Before committing, update README.md if needed.** Only change what is directly affected by the modification; update as little as possible.
 
 ## Code exploration — codebase-memory-mcp
 
