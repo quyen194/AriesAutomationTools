@@ -136,13 +136,25 @@ struct Workflow {
     WindowTarget  window;
     StartTrigger  trigger;
     std::vector<Activity> activities;
+    // Per-workflow hotkeys (software-level, window must be focused)
+    std::string hotkey_start  = "";
+    std::string hotkey_stop   = "";
+    std::string hotkey_pause  = "";
+    std::string hotkey_resume = "";
 };
 
 // ── App config (top-level) ────────────────────────────────────────────────────
 
 struct AppConfig {
-    std::string global_hotkey  = "f9";
-    std::string record_hotkey  = "";   // hotkey to start/stop recording (empty = disabled)
+    std::string global_hotkey         = "f9";
+    // Recording hotkeys (OS-level, work even when minimized)
+    std::string start_record_hotkey   = "";
+    std::string stop_record_hotkey    = "";
+    // Global action hotkeys (software-level, window must be focused)
+    std::string start_all_hotkey      = "";
+    std::string stop_all_hotkey       = "";
+    std::string pause_all_hotkey      = "";
+    std::string resume_all_hotkey     = "";
     bool        close_to_tray    = false;
     bool        minimize_to_tray = false;
     bool        single_instance  = true;

@@ -41,8 +41,9 @@ public:
 
     // Global hotkey toggle (start-all / pause-resume-all)
     void SetGlobalHotkey(const std::string& key_name);
-    // Record hotkey — fires callback when pressed, even when window is not focused
+    // Record hotkeys — fire callbacks when pressed, even when window is not focused
     void SetRecordHotkey(const std::string& key_name, std::function<void()> callback);
+    void SetStopRecordHotkey(const std::string& key_name, std::function<void()> callback);
     // Poll hotkey events — call once per frame from UI thread
     void PollHotkeys();
 
@@ -78,5 +79,6 @@ private:
     TriggerCallback                             m_triggerCb;
     std::string                                 m_hotkeyName;
     std::string                                 m_recordHotkeyName;
+    std::string                                 m_stopRecordHotkeyName;
     std::atomic<bool>                           m_globalPaused{false};
 };

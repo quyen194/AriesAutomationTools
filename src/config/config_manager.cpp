@@ -277,6 +277,11 @@ static json SerializeWorkflow(const Workflow& w) {
     for (auto& a : w.activities) acts.push_back(SerializeActivity(a));
     j["activities"] = acts;
 
+    j["hotkey_start"]  = w.hotkey_start;
+    j["hotkey_stop"]   = w.hotkey_stop;
+    j["hotkey_pause"]  = w.hotkey_pause;
+    j["hotkey_resume"] = w.hotkey_resume;
+
     return j;
 }
 
@@ -322,6 +327,11 @@ static Workflow DeserializeWorkflow(const json& j) {
             w.activities.push_back(DeserializeActivity(aj));
     }
 
+    w.hotkey_start  = j.value("hotkey_start",  "");
+    w.hotkey_stop   = j.value("hotkey_stop",   "");
+    w.hotkey_pause  = j.value("hotkey_pause",  "");
+    w.hotkey_resume = j.value("hotkey_resume", "");
+
     return w;
 }
 
@@ -338,8 +348,14 @@ AppConfig ConfigManager::Load(const std::string& path) {
     }
 
     AppConfig cfg;
-    cfg.global_hotkey  = root.value("global_hotkey",  "f9");
-    cfg.record_hotkey  = root.value("record_hotkey",  "");
+    cfg.global_hotkey       = root.value("global_hotkey",       "f9");
+    // "record_hotkey" is the legacy key; "start_record_hotkey" takes precedence
+    cfg.start_record_hotkey = root.value("start_record_hotkey", root.value("record_hotkey", ""));
+    cfg.stop_record_hotkey  = root.value("stop_record_hotkey",  "");
+    cfg.start_all_hotkey    = root.value("start_all_hotkey",    "");
+    cfg.stop_all_hotkey     = root.value("stop_all_hotkey",     "");
+    cfg.pause_all_hotkey    = root.value("pause_all_hotkey",    "");
+    cfg.resume_all_hotkey   = root.value("resume_all_hotkey",   "");
     cfg.close_to_tray    = root.value("close_to_tray",    false);
     cfg.minimize_to_tray = root.value("minimize_to_tray", false);
     cfg.single_instance  = root.value("single_instance",  true);
@@ -354,8 +370,13 @@ AppConfig ConfigManager::Load(const std::string& path) {
 
 void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     json root;
-    root["global_hotkey"] = config.global_hotkey;
-    root["record_hotkey"] = config.record_hotkey;
+    root["global_hotkey"]       = config.global_hotkey;
+    root["start_record_hotkey"] = config.start_record_hotkey;
+    root["stop_record_hotkey"]  = config.stop_record_hotkey;
+    root["start_all_hotkey"]    = config.start_all_hotkey;
+    root["stop_all_hotkey"]     = config.stop_all_hotkey;
+    root["pause_all_hotkey"]    = config.pause_all_hotkey;
+    root["resume_all_hotkey"]   = config.resume_all_hotkey;
     root["close_to_tray"]    = config.close_to_tray;
     root["minimize_to_tray"] = config.minimize_to_tray;
     root["single_instance"]  = config.single_instance;

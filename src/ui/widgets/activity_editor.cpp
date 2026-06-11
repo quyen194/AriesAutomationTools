@@ -658,6 +658,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
 
         auto posMode = [](PositionMode& pm) {
             int idx = (pm == PositionMode::Relative) ? 1 : 0;
+            ImGui::SetNextItemWidth(140);
             if (ImGui::Combo("Position mode", &idx, PosModeNames, 2))
                 pm = idx == 1 ? PositionMode::Relative : PositionMode::Absolute;
             if (ImGui::IsItemHovered())
@@ -666,22 +667,27 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
         };
         auto btnCombo = [](MouseButton& b) {
             int idx = (b == MouseButton::Right) ? 1 : (b == MouseButton::Middle) ? 2 : 0;
+            ImGui::SetNextItemWidth(100);
             if (ImGui::Combo("Button", &idx, BtnNames, 3))
                 b = (MouseButton)idx;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Which mouse button to click");
         };
         auto delayFields = [](int& dm, int& dr) {
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &dm);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before executing the next activity");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Random range (ms)", &dr);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Add a random delay of 0 to N ms (makes timing less predictable)");
             dm = std::max(0, dm); dr = std::max(0, dr);
         };
         auto xyPick = [this](int& x, int& y, PickStage stage) {
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("X", &x);
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Y", &y);
             if (ImGui::Button("Pick position##xy")) {
                 m_pickStage = stage;
@@ -707,24 +713,26 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
 
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             posMode(v.pos_mode);
-            ImGui::InputInt("From X", &v.from_x);
-            ImGui::InputInt("From Y", &v.from_y);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("From X", &v.from_x);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("From Y", &v.from_y);
             if (ImGui::Button("Pick start##dfs")) {
                 m_pickStage = PickStage::DragFrom;
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag start position");
-            ImGui::InputInt("To X", &v.to_x);
-            ImGui::InputInt("To Y", &v.to_y);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("To X", &v.to_x);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("To Y", &v.to_y);
             if (ImGui::Button("Pick end##dfe")) {
                 m_pickStage = PickStage::DragTo;
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag end position");
             btnCombo(v.button);
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Duration (ms)", &v.duration_ms);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the drag motion takes");
             v.duration_ms = std::max(1, v.duration_ms);
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
@@ -732,6 +740,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
         } else if constexpr (std::is_same_v<T,MouseScrollActivity>) {
             posMode(v.pos_mode);
             xyPick(v.x, v.y, PickStage::Single);
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delta X", &v.delta_x);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Horizontal scroll amount");
 
@@ -750,6 +759,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                     m_scrollAccum   = 0.f;
                 }
             } else {
+                ImGui::SetNextItemWidth(120);
                 ImGui::InputInt("Delta Y", &v.delta_y);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Vertical scroll amount (positive = up, negative = down)");
@@ -760,6 +770,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Scroll your mouse wheel to capture the delta");
             }
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
@@ -812,17 +823,21 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 v.text = textBuf;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Text to type character by character");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Char delay (ms)", &v.delay_between_chars_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Delay between each typed character");
             v.delay_between_chars_ms = std::max(0, v.delay_between_chars_ms);
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
 
         } else if constexpr (std::is_same_v<T,WaitActivity>) {
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Duration (ms)", &v.duration_ms);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long to wait");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Random range (ms)", &v.random_range_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Add a random extra delay of 0 to N ms");
@@ -831,7 +846,8 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
 
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
             posMode(v.pos_mode);
-            ImGui::InputInt("X", &v.x); ImGui::InputInt("Y", &v.y);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("X", &v.x);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y", &v.y);
             if (ImGui::Button("Pick position##pcx")) {
                 m_pickStage = PickStage::Single;
                 ImGui::CloseCurrentPopup();
@@ -844,6 +860,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 ((v.color_rgb>> 8)&0xFF)/255.f,
                 ( v.color_rgb     &0xFF)/255.f
             };
+            ImGui::SetNextItemWidth(200);
             if (ImGui::ColorEdit3("Color", col)) {
                 v.color_rgb = ((uint32_t)(col[0]*255)<<16) |
                               ((uint32_t)(col[1]*255)<< 8) |
@@ -851,6 +868,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Target pixel color to match");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Tolerance", &v.tolerance);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
@@ -858,16 +876,20 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
 
             int actionIdx = (v.on_no_match == PixelCheckAction::SkipIteration) ? 1
                           : (v.on_no_match == PixelCheckAction::StopWorkflow)   ? 2 : 0;
+            ImGui::SetNextItemWidth(160);
             if (ImGui::Combo("On no match", &actionIdx, PixelActionNames, 3))
                 v.on_no_match = (PixelCheckAction)actionIdx;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("What to do if the pixel color does not match");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Retry interval (ms)", &v.retry_interval_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("How often to re-check the pixel when retrying");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Retry timeout (ms, 0=inf)", &v.retry_timeout_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
@@ -905,6 +927,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("ID of the workflow to run as a sub-workflow");
             }
+            ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");

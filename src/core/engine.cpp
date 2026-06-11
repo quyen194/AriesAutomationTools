@@ -165,6 +165,15 @@ void WorkflowEngine::SetRecordHotkey(const std::string& key_name,
         m_hotkey->Register(key_name, std::move(callback));
 }
 
+void WorkflowEngine::SetStopRecordHotkey(const std::string& key_name,
+                                          std::function<void()> callback) {
+    if (!m_hotkey) return;
+    if (!m_stopRecordHotkeyName.empty()) m_hotkey->Unregister(m_stopRecordHotkeyName);
+    m_stopRecordHotkeyName = key_name;
+    if (!key_name.empty() && callback)
+        m_hotkey->Register(key_name, std::move(callback));
+}
+
 void WorkflowEngine::PollHotkeys() {
     if (m_hotkey) m_hotkey->PollEvents();
 }

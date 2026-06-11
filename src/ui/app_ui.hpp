@@ -32,6 +32,7 @@ private:
     void RenderMenuBar();
     void RenderTopBar();
     void RenderWorkflowPanel(Workflow& wf);
+    void RenderWorkflowHotkeys(Workflow& wf);
     void RenderTriggerEditor(StartTrigger& trig, const std::string& wfId);
     void RenderWindowTargetEditor(WindowTarget& wt);
     void RenderQuitConfirmModal();
@@ -45,8 +46,9 @@ private:
     void LoadConfig(const std::string& path);
     std::string EnsureId(Workflow& wf);
 
-    // Re-registers the record hotkey with a callback; call after any key change.
-    void ApplyRecordHotkey(const std::string& key);
+    // Apply OS-level record hotkeys via the engine.
+    void ApplyStartRecordHotkey(const std::string& key);
+    void ApplyStopRecordHotkey(const std::string& key);
     // Pushes the formatted global hotkey label to the tray context menu.
     void UpdateTrayHotkeyLabel();
 
@@ -75,16 +77,41 @@ private:
 
     TrayManager            m_tray;
 
+    // ── Hotkey Configuration window ───────────────────────────────────────────
+    bool                   m_showHotkeyConfig = false;
+
+    // Global toggle hotkey
     char                   m_hotkeyBuf[64]{};
-    bool                   m_hotkeyCapture = false;
+    bool                   m_cfgGlobalCapture = false;
 
-    // Hotkey config window
-    bool                   m_showHotkeyConfig  = false;
-    char                   m_recHotkeyBuf[64]{};
-    bool                   m_cfgGlobalCapture  = false;
-    bool                   m_cfgRecCapture     = false;
+    // Start / stop recording hotkeys
+    char                   m_cfgStartRecBuf[64]{};
+    bool                   m_cfgStartRecCapture = false;
+    char                   m_cfgStopRecBuf[64]{};
+    bool                   m_cfgStopRecCapture  = false;
 
-    // Pixel trigger position picker
+    // Global action hotkeys
+    char                   m_cfgStartAllBuf[64]{};
+    bool                   m_cfgStartAllCapture = false;
+    char                   m_cfgStopAllBuf[64]{};
+    bool                   m_cfgStopAllCapture  = false;
+    char                   m_cfgPauseAllBuf[64]{};
+    bool                   m_cfgPauseAllCapture = false;
+    char                   m_cfgResumeAllBuf[64]{};
+    bool                   m_cfgResumeAllCapture = false;
+
+    // ── Per-workflow hotkeys (in workflow panel) ───────────────────────────────
+    std::string            m_wfHkId;            // tracks which workflow's buffers are loaded
+    char                   m_wfHkStartBuf[64]{};
+    bool                   m_wfHkStartCapture  = false;
+    char                   m_wfHkStopBuf[64]{};
+    bool                   m_wfHkStopCapture   = false;
+    char                   m_wfHkPauseBuf[64]{};
+    bool                   m_wfHkPauseCapture  = false;
+    char                   m_wfHkResumeBuf[64]{};
+    bool                   m_wfHkResumeCapture = false;
+
+    // ── Pixel trigger position picker ─────────────────────────────────────────
     bool          m_trigPickActive = false;
     StartTrigger* m_trigPickTarget = nullptr;
     void RenderTriggerPickOverlay();
