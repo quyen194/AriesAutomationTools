@@ -306,13 +306,17 @@ void TrayManager::UpdateIcon(const uint8_t* pixels, int w, int h) {
 
 void TrayManager::Poll(std::vector<TrayPendingAction>& out) {
     if (!m_impl || !m_impl->hwnd) return;
-    m_impl->pending.clear();
 
+    // SDL_PollEvent uses PeekMessage(NULL,...) which drains messages for all
+    // windows in the thread, including our hidden HWND. WndProc/ShowContextMenu
+    // may therefore have already pushed to pending before Poll is called.
+    // Run our own pump to catch any remaining messages, then consume pending.
     MSG msg;
     while (PeekMessage(&msg, m_impl->hwnd, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);  // calls WndProc → may call ShowContextMenu
     }
 
-    out = m_impl->pending;
+    out = std::move(m_impl->pending);
+    m_impl->pending.clear();
 }
