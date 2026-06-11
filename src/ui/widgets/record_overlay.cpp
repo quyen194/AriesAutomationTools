@@ -228,11 +228,7 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
         ImGui::Separator();
         if (ImGui::Button("[Stop]", ImVec2(-1, 0))) {
             engine.Stop();
-            m_engineRef  = &engine;
-            m_captured   = ApplyFilters(engine.ToActivities(m_captureTimings, m_fixedDelay),
-                                        engine.Events());
-            m_reviewSelected.assign(m_captured.size(), true);
-            m_showReview = true;
+            TriggerReview(engine);
         }
         ImGui::End();
         return;

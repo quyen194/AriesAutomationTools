@@ -16,6 +16,7 @@ struct RecordOverlayWidget {
     void TriggerReview(RecordEngine& engine);
 
     void Open();
+    void Close()             { m_windowOpen = false; }
     bool IsOpen()            const { return m_windowOpen; }
     bool IsHotkeyCapturing() const { return m_hotkeyCapture || m_stopHotkeyCapture; }
     void SetHotkey(const std::string& hk);

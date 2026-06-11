@@ -1012,8 +1012,10 @@ void AppUI::DeleteWorkflow(const std::string& id) {
 void AppUI::ApplyStartRecordHotkey(const std::string& key) {
     m_engine.SetRecordHotkey(key, [this]() {
         if (m_recOverlay.IsHotkeyCapturing()) return;
-        if (!m_recorder.IsRecording())
+        if (!m_recorder.IsRecording()) {
+            m_recOverlay.Close();
             m_recorder.Start();
+        }
     });
 }
 
