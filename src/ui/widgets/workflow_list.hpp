@@ -3,7 +3,7 @@
 #include <functional>
 #include <string>
 
-enum class WorkflowStatus { Idle, Starting, Running, Suspended, Paused };
+enum class WorkflowStatus { Idle, Starting, Running, WaitingRepeat, Interrupted, Paused };
 
 // Left-panel widget: renders the workflow list and add/dup/delete controls.
 struct WorkflowListWidget {

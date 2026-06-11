@@ -26,6 +26,12 @@ public:
     void SetUserPaused(bool p) { m_userPaused.store(p); }
     bool IsUserPaused()  const { return m_userPaused.load(); }
 
+    // Live-update repeat interval without restarting the scheduler
+    void SetRepeatInterval(int ms) { m_repeatIntervalMs.store(ms); }
+
+    // True while sleeping between repetitions (distinct from smart-detection suspend)
+    bool IsWaitingRepeat() const { return m_waitingRepeat.load(); }
+
     // Milliseconds since epoch when Start() was last called (0 if never started)
     int64_t GetStartTimeMs() const { return m_startTimeMs.load(); }
 
@@ -44,6 +50,8 @@ private:
     std::atomic<bool>    m_running{false};
     std::atomic<bool>    m_suspended{false};
     std::atomic<bool>    m_userPaused{false};
+    std::atomic<bool>    m_waitingRepeat{false};
     std::atomic<int>     m_currentIndex{-1};
+    std::atomic<int>     m_repeatIntervalMs{0};
     std::atomic<int64_t> m_startTimeMs{0};
 };

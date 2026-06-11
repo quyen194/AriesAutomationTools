@@ -210,6 +210,29 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             }
 
             ImGui::SameLine();
+            if (ImGui::SmallButton("Dup##bsel")) {
+                // Collect copies in order, then insert after the last selected index
+                std::vector<Activity> dups;
+                for (int i = 0; i < (int)wf.activities.size(); ++i)
+                    if (i < (int)m_selection.size() && m_selection[i]) {
+                        Activity copy = wf.activities[i];
+                        copy.id = GenId();
+                        dups.push_back(std::move(copy));
+                    }
+                if (!dups.empty()) {
+                    int insertAt = lastSel + 1;
+                    wf.activities.insert(wf.activities.begin() + insertAt,
+                                         dups.begin(), dups.end());
+                    m_selection.clear();
+                    m_selection.resize(wf.activities.size(), false);
+                    for (int i = insertAt; i < insertAt + (int)dups.size(); ++i)
+                        m_selection[i] = true;
+                    m_lastClickedIdx = insertAt + (int)dups.size() - 1;
+                    if (OnChanged) OnChanged();
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate selected activities");
+            ImGui::SameLine();
             if (ImGui::SmallButton("Del##bsel")) {
                 m_confirmDeleteBatch = true;
                 m_confirmDeleteIdx   = -1;
@@ -238,10 +261,11 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     }
 
     // Deferred per-item operations from context menu
-    int ctxEnableIdx  = -1;
-    int ctxDisableIdx = -1;
-    int ctxMoveUp     = -1;
-    int ctxMoveDown   = -1;
+    int ctxEnableIdx    = -1;
+    int ctxDisableIdx   = -1;
+    int ctxMoveUp       = -1;
+    int ctxMoveDown     = -1;
+    int ctxDuplicateIdx = -1;
 
     ImGui::BeginChild("##actlist", ImVec2(0, -60), true);
 
@@ -336,6 +360,8 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 m_scrollCapture    = false;
                 m_pickStage        = PickStage::None;
             }
+            if (ImGui::MenuItem("Duplicate"))
+                ctxDuplicateIdx = i;
             ImGui::Separator();
             if (ImGui::MenuItem("Select All"))
                 std::fill(m_selection.begin(), m_selection.end(), true);
@@ -400,6 +426,17 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         if (ctxMoveDown   < (int)m_selection.size() &&
             ctxMoveDown+1 < (int)m_selection.size())
             std::swap(m_selection[ctxMoveDown], m_selection[ctxMoveDown + 1]);
+        if (OnChanged) OnChanged();
+    }
+    if (ctxDuplicateIdx >= 0 && ctxDuplicateIdx < (int)wf.activities.size()) {
+        Activity copy = wf.activities[ctxDuplicateIdx];
+        copy.id = GenId();
+        int insertAt = ctxDuplicateIdx + 1;
+        wf.activities.insert(wf.activities.begin() + insertAt, std::move(copy));
+        m_selection.clear();
+        m_selection.resize(wf.activities.size(), false);
+        m_selection[insertAt] = true;
+        m_lastClickedIdx = insertAt;
         if (OnChanged) OnChanged();
     }
     if (ctxEnableIdx >= 0 && ctxEnableIdx < (int)wf.activities.size()) {

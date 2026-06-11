@@ -17,7 +17,9 @@ void Scheduler_SetPixelChecker(IPixelChecker* p)      { g_pixel = p; }
 // ─────────────────────────────────────────────────────────────────────────────
 
 Scheduler::Scheduler(const Workflow& wf, CoordResolver resolver)
-    : m_workflow(wf), m_resolver(std::move(resolver)) {}
+    : m_workflow(wf), m_resolver(std::move(resolver)) {
+    m_repeatIntervalMs.store(wf.repeat_interval_ms);
+}
 
 Scheduler::~Scheduler() { Stop(); }
 
@@ -163,7 +165,9 @@ void Scheduler::Run() {
             if (--loopsLeft <= 0) break;
         }
 
-        SleepInterruptible(m_workflow.repeat_interval_ms);
+        m_waitingRepeat.store(true);
+        SleepInterruptible(m_repeatIntervalMs.load());
+        m_waitingRepeat.store(false);
     }
 
     m_running = false;

@@ -499,10 +499,11 @@ void AppUI::Render() {
     m_wfList.Render(
         m_config.workflows,
         [this](const std::string& id) -> WorkflowStatus {
-            if (m_engine.IsStarting(id))  return WorkflowStatus::Starting;
-            if (!m_engine.IsRunning(id))  return WorkflowStatus::Idle;
-            if (m_engine.IsPaused(id))    return WorkflowStatus::Paused;
-            if (m_engine.IsSuspended(id)) return WorkflowStatus::Suspended;
+            if (m_engine.IsStarting(id))        return WorkflowStatus::Starting;
+            if (!m_engine.IsRunning(id))        return WorkflowStatus::Idle;
+            if (m_engine.IsPaused(id))          return WorkflowStatus::Paused;
+            if (m_engine.IsSuspended(id))       return WorkflowStatus::Interrupted;
+            if (m_engine.IsWaitingRepeat(id))   return WorkflowStatus::WaitingRepeat;
             return WorkflowStatus::Running;
         },
         m_selectedId);
@@ -700,10 +701,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     if (ImGui::Checkbox("Enabled", &wf.enabled)) m_dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable or disable this workflow");
 
-    bool running   = m_engine.IsRunning(wf.id);
-    bool paused    = m_engine.IsPaused(wf.id);
-    bool suspended = m_engine.IsSuspended(wf.id);
-    bool starting  = m_engine.IsStarting(wf.id);
+    bool running      = m_engine.IsRunning(wf.id);
+    bool paused       = m_engine.IsPaused(wf.id);
+    bool suspended    = m_engine.IsSuspended(wf.id);
+    bool waiting      = m_engine.IsWaitingRepeat(wf.id);
+    bool starting     = m_engine.IsStarting(wf.id);
     ImGui::SameLine();
     if (!running && !starting) {
         if (ImGui::Button(">> Start")) m_engine.StartWorkflow(wf.id);
@@ -731,7 +733,7 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         }
     }
 
-    ImGui::SameLine(ImGui::GetContentRegionMax().x - 160.0f);
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - 200.0f);
     const char* statusText;
     ImVec4 statusColor;
     if (starting) {
@@ -741,8 +743,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         statusText  = "PAUSED";
         statusColor = ImVec4(1.f, 0.85f, 0.f, 1.f);
     } else if (suspended) {
-        statusText  = "SUSPENDED";
+        statusText  = "INTERRUPTED";
         statusColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f);
+    } else if (waiting) {
+        statusText  = "WAITING";
+        statusColor = ImVec4(0.4f, 0.9f, 0.7f, 1.f);
     } else if (running) {
         statusText  = "RUNNING";
         statusColor = ImVec4(0.2f, 0.9f, 0.2f, 1.f);
@@ -761,8 +766,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     ImGui::Separator();
 
     ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("Repeat interval (ms)", &wf.repeat_interval_ms))
-        { wf.repeat_interval_ms = std::max(100, wf.repeat_interval_ms); m_dirty = true; }
+    if (ImGui::InputInt("Repeat interval (ms)", &wf.repeat_interval_ms)) {
+        wf.repeat_interval_ms = std::max(100, wf.repeat_interval_ms);
+        m_engine.UpdateRepeatInterval(wf.id, wf.repeat_interval_ms);
+        m_dirty = true;
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Wait this many ms between each run of the workflow");
     ImGui::SetNextItemWidth(120);
@@ -1061,6 +1069,7 @@ void AppUI::DuplicateWorkflow(const std::string& id) {
     Workflow copy = *it;
     copy.id   = GenId();
     copy.name = copy.name + " (copy)";
+    for (auto& a : copy.activities) a.id = GenId();
     m_config.workflows.insert(it + 1, copy);
     m_selectedId = copy.id;
     m_engine.SetWorkflows(m_config.workflows);

@@ -39,7 +39,11 @@ public:
     bool IsPaused(const std::string& id) const;
     bool AnyPaused() const;
     bool IsSuspended(const std::string& id) const;
+    bool IsWaitingRepeat(const std::string& id) const;
     bool IsStarting(const std::string& id) const;
+
+    // Update repeat interval on a running scheduler without stopping it
+    void UpdateRepeatInterval(const std::string& id, int ms);
     bool IsGloballyPaused() const { return m_globalPaused.load(); }
 
     // Global action hotkeys (OS-level, work even when minimized)

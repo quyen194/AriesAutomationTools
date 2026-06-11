@@ -24,8 +24,10 @@ void WorkflowListWidget::Render(
                 badge = "[~]"; badgeColor = ImVec4(0.3f, 0.8f, 1.0f, 1.f); break;
             case WorkflowStatus::Running:
                 badge = "[R]"; badgeColor = ImVec4(0.2f, 0.9f, 0.2f, 1.f); break;
-            case WorkflowStatus::Suspended:
-                badge = "[S]"; badgeColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f); break;
+            case WorkflowStatus::WaitingRepeat:
+                badge = "[W]"; badgeColor = ImVec4(0.3f, 0.75f, 0.55f, 1.f); break;
+            case WorkflowStatus::Interrupted:
+                badge = "[!]"; badgeColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f); break;
             case WorkflowStatus::Paused:
                 badge = "[P]"; badgeColor = ImVec4(1.0f, 0.85f, 0.0f, 1.f); break;
             default:
@@ -47,7 +49,10 @@ void WorkflowListWidget::Render(
         } else if (st == WorkflowStatus::Running) {
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.3f,  1.0f,  0.3f,  1.f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,  0.6f,  0.1f,  0.5f));
-        } else if (st == WorkflowStatus::Suspended) {
+        } else if (st == WorkflowStatus::WaitingRepeat) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.4f,  0.9f,  0.7f,  1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,  0.4f,  0.3f,  0.5f));
+        } else if (st == WorkflowStatus::Interrupted) {
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f,  0.7f,  0.3f,  1.f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.5f,  0.3f,  0.05f, 0.5f));
         } else if (st == WorkflowStatus::Paused) {
@@ -68,8 +73,10 @@ void WorkflowListWidget::Render(
         if (ImGui::IsItemHovered()) {
             if (!wf.enabled)
                 ImGui::SetTooltip("Workflow is disabled");
-            else if (st == WorkflowStatus::Suspended)
-                ImGui::SetTooltip("Suspended by smart detection (user is active)");
+            else if (st == WorkflowStatus::WaitingRepeat)
+                ImGui::SetTooltip("Waiting for repeat interval before next run");
+            else if (st == WorkflowStatus::Interrupted)
+                ImGui::SetTooltip("Interrupted by smart detection (user is active)");
             else if (st == WorkflowStatus::Starting)
                 ImGui::SetTooltip("Waiting for user idle before starting");
         }

@@ -164,6 +164,21 @@ bool WorkflowEngine::IsSuspended(const std::string& id) const {
     return false;
 }
 
+bool WorkflowEngine::IsWaitingRepeat(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->IsWaitingRepeat();
+    return false;
+}
+
+void WorkflowEngine::UpdateRepeatInterval(const std::string& id, int ms) {
+    for (size_t i = 0; i < m_workflows.size(); ++i) {
+        if (m_workflows[i].id != id) continue;
+        m_workflows[i].repeat_interval_ms = ms;
+        m_schedulers[i]->SetRepeatInterval(ms);
+        return;
+    }
+}
+
 bool WorkflowEngine::IsStarting(const std::string& id) const {
     for (size_t i = 0; i < m_workflows.size(); ++i) {
         if (m_workflows[i].id != id) continue;
