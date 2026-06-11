@@ -10,14 +10,16 @@
 struct RecordOverlayWidget {
     std::function<void(std::vector<Activity>)> OnFinished;
     std::function<void(const std::string&)>    OnHotkeyChanged;
+    std::function<void(const std::string&)>    OnStopHotkeyChanged;
 
     void Render(RecordEngine& engine);
     void TriggerReview(RecordEngine& engine);
 
     void Open();
     bool IsOpen()            const { return m_windowOpen; }
-    bool IsHotkeyCapturing() const { return m_hotkeyCapture; }
+    bool IsHotkeyCapturing() const { return m_hotkeyCapture || m_stopHotkeyCapture; }
     void SetHotkey(const std::string& hk);
+    void SetStopHotkey(const std::string& hk);
 
 private:
     bool m_windowOpen      = false;
@@ -31,6 +33,8 @@ private:
 
     char m_hotkeyBuf[64]{};
     bool m_hotkeyCapture = false;
+    char m_stopHotkeyBuf[64]{};
+    bool m_stopHotkeyCapture = false;
 
     RecordEngine*          m_engineRef = nullptr;
     std::vector<Activity>  m_captured;

@@ -135,25 +135,36 @@ int WorkflowEngine::CurrentActivityIndex(const std::string& id) const {
     return -1;
 }
 
-void WorkflowEngine::SetGlobalHotkey(const std::string& key_name) {
+void WorkflowEngine::SetStartAllHotkey(const std::string& key_name) {
     if (!m_hotkey) return;
-    if (!m_hotkeyName.empty()) m_hotkey->Unregister(m_hotkeyName);
-    m_hotkeyName = key_name;
-    m_hotkey->Register(key_name, [this]() {
-        if (AnyRunning()) {
-            // Toggle pause/resume all running workflows
-            bool shouldPause = !AnyPaused();
-            m_globalPaused = shouldPause;
-            for (auto& s : m_schedulers)
-                if (s->IsRunning()) s->SetUserPaused(shouldPause);
-        } else {
-            // Nothing running — start all enabled workflows
-            m_globalPaused = false;
-            for (size_t i = 0; i < m_workflows.size(); ++i)
-                if (m_workflows[i].enabled && !m_schedulers[i]->IsRunning())
-                    m_schedulers[i]->Start();
-        }
-    });
+    if (!m_startAllHotkeyName.empty()) m_hotkey->Unregister(m_startAllHotkeyName);
+    m_startAllHotkeyName = key_name;
+    if (!key_name.empty())
+        m_hotkey->Register(key_name, [this]() { StartAll(); });
+}
+
+void WorkflowEngine::SetStopAllHotkey(const std::string& key_name) {
+    if (!m_hotkey) return;
+    if (!m_stopAllHotkeyName.empty()) m_hotkey->Unregister(m_stopAllHotkeyName);
+    m_stopAllHotkeyName = key_name;
+    if (!key_name.empty())
+        m_hotkey->Register(key_name, [this]() { StopAll(); });
+}
+
+void WorkflowEngine::SetPauseAllHotkey(const std::string& key_name) {
+    if (!m_hotkey) return;
+    if (!m_pauseAllHotkeyName.empty()) m_hotkey->Unregister(m_pauseAllHotkeyName);
+    m_pauseAllHotkeyName = key_name;
+    if (!key_name.empty())
+        m_hotkey->Register(key_name, [this]() { PauseAll(); });
+}
+
+void WorkflowEngine::SetResumeAllHotkey(const std::string& key_name) {
+    if (!m_hotkey) return;
+    if (!m_resumeAllHotkeyName.empty()) m_hotkey->Unregister(m_resumeAllHotkeyName);
+    m_resumeAllHotkeyName = key_name;
+    if (!key_name.empty())
+        m_hotkey->Register(key_name, [this]() { ResumeAll(); });
 }
 
 void WorkflowEngine::SetRecordHotkey(const std::string& key_name,

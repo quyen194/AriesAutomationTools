@@ -348,7 +348,6 @@ AppConfig ConfigManager::Load(const std::string& path) {
     }
 
     AppConfig cfg;
-    cfg.global_hotkey       = root.value("global_hotkey",       "f9");
     // "record_hotkey" is the legacy key; "start_record_hotkey" takes precedence
     cfg.start_record_hotkey = root.value("start_record_hotkey", root.value("record_hotkey", ""));
     cfg.stop_record_hotkey  = root.value("stop_record_hotkey",  "");
@@ -370,7 +369,6 @@ AppConfig ConfigManager::Load(const std::string& path) {
 
 void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     json root;
-    root["global_hotkey"]       = config.global_hotkey;
     root["start_record_hotkey"] = config.start_record_hotkey;
     root["stop_record_hotkey"]  = config.stop_record_hotkey;
     root["start_all_hotkey"]    = config.start_all_hotkey;

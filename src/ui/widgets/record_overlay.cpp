@@ -47,6 +47,11 @@ void RecordOverlayWidget::SetHotkey(const std::string& hk) {
     m_hotkeyBuf[sizeof(m_hotkeyBuf) - 1] = '\0';
 }
 
+void RecordOverlayWidget::SetStopHotkey(const std::string& hk) {
+    strncpy(m_stopHotkeyBuf, hk.c_str(), sizeof(m_stopHotkeyBuf) - 1);
+    m_stopHotkeyBuf[sizeof(m_stopHotkeyBuf) - 1] = '\0';
+}
+
 void RecordOverlayWidget::Open() {
     m_windowOpen = true;
 }
@@ -108,46 +113,61 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
     if (m_windowOpen && !engine.IsRecording()) {
         ImGui::Begin("Recording", nullptr, flags);
 
-        // Hotkey setting
-        ImGui::Text("Hotkey:"); ImGui::SameLine();
-        if (m_hotkeyCapture) {
-            ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Cancel##hkc")) m_hotkeyCapture = false;
-            for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
-                ImGuiKey key = (ImGuiKey)k;
-                if (!ImGui::IsKeyPressed(key, false)) continue;
-                if (key == ImGuiKey_Escape) { m_hotkeyCapture = false; break; }
-                if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
-                    key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
-                    key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
-                    key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
-                auto name = RecKeyToName(key);
-                if (!name.empty()) {
-                    std::string hk;
-                    if (io.KeyCtrl)  hk += "ctrl+";
-                    if (io.KeyShift) hk += "shift+";
-                    if (io.KeyAlt)   hk += "alt+";
-                    hk += name;
-                    strncpy(m_hotkeyBuf, hk.c_str(), sizeof(m_hotkeyBuf) - 1);
-                    if (OnHotkeyChanged) OnHotkeyChanged(hk);
-                    m_hotkeyCapture = false;
+        // Helper: render one hotkey row (label, buf, capture flag, callback)
+        auto renderRecHkRow = [&](const char* label, char* buf, int bufSz,
+                                   bool& capturing, const char* rowId,
+                                   std::function<void(const std::string&)> onChange)
+        {
+            ImGui::Text("%s", label); ImGui::SameLine(60);
+            if (capturing) {
+                ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Press key...");
+                ImGui::SameLine();
+                char cid[32]; snprintf(cid, sizeof(cid), "Cancel##%s", rowId);
+                if (ImGui::SmallButton(cid)) capturing = false;
+                for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+                    ImGuiKey key = (ImGuiKey)k;
+                    if (!ImGui::IsKeyPressed(key, false)) continue;
+                    if (key == ImGuiKey_Escape) { capturing = false; break; }
+                    if (key == ImGuiKey_LeftCtrl  || key == ImGuiKey_RightCtrl  ||
+                        key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
+                        key == ImGuiKey_LeftAlt   || key == ImGuiKey_RightAlt   ||
+                        key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
+                    auto name = RecKeyToName(key);
+                    if (!name.empty()) {
+                        std::string hk;
+                        if (io.KeyCtrl)  hk += "ctrl+";
+                        if (io.KeyShift) hk += "shift+";
+                        if (io.KeyAlt)   hk += "alt+";
+                        hk += name;
+                        strncpy(buf, hk.c_str(), bufSz - 1);
+                        buf[bufSz - 1] = '\0';
+                        if (onChange) onChange(hk);
+                        capturing = false;
+                    }
+                    break;
                 }
-                break;
+            } else {
+                ImGui::SetNextItemWidth(80);
+                char iid[32]; snprintf(iid, sizeof(iid), "##%s", rowId);
+                ImGui::InputText(iid, buf, bufSz, ImGuiInputTextFlags_ReadOnly);
+                ImGui::SameLine();
+                char capid[32]; snprintf(capid, sizeof(capid), "Capture##%s", rowId);
+                if (ImGui::SmallButton(capid)) capturing = true;
+                if (!std::string(buf).empty()) {
+                    ImGui::SameLine();
+                    char clrid[32]; snprintf(clrid, sizeof(clrid), "Clear##%s", rowId);
+                    if (ImGui::SmallButton(clrid)) {
+                        buf[0] = '\0';
+                        if (onChange) onChange("");
+                    }
+                }
             }
-        } else {
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::InputText("##rchk", m_hotkeyBuf, sizeof(m_hotkeyBuf),
-                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
-                if (OnHotkeyChanged) OnHotkeyChanged(std::string(m_hotkeyBuf));
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Hotkey to start/stop recording (e.g. f8, ctrl+r)");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Capture##rchk")) m_hotkeyCapture = true;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Click then press a key combination");
-        }
+        };
+
+        renderRecHkRow("Start:", m_hotkeyBuf, sizeof(m_hotkeyBuf),
+                        m_hotkeyCapture, "rchk", OnHotkeyChanged);
+        renderRecHkRow("Stop:", m_stopHotkeyBuf, sizeof(m_stopHotkeyBuf),
+                        m_stopHotkeyCapture, "rchkstop", OnStopHotkeyChanged);
 
         ImGui::Separator();
         ImGui::TextDisabled("Filters (disabled once started):");

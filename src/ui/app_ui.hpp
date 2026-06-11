@@ -46,11 +46,13 @@ private:
     void LoadConfig(const std::string& path);
     std::string EnsureId(Workflow& wf);
 
-    // Apply OS-level record hotkeys via the engine.
+    // Apply OS-level hotkeys via the engine.
     void ApplyStartRecordHotkey(const std::string& key);
     void ApplyStopRecordHotkey(const std::string& key);
-    // Pushes the formatted global hotkey label to the tray context menu.
-    void UpdateTrayHotkeyLabel();
+    void ApplyStartAllHotkey(const std::string& key);
+    void ApplyStopAllHotkey(const std::string& key);
+    void ApplyPauseAllHotkey(const std::string& key);
+    void ApplyResumeAllHotkey(const std::string& key);
 
     void MinimizeToTray();
     void RestoreFromTray();
@@ -79,10 +81,6 @@ private:
 
     // ── Hotkey Configuration window ───────────────────────────────────────────
     bool                   m_showHotkeyConfig = false;
-
-    // Global toggle hotkey
-    char                   m_hotkeyBuf[64]{};
-    bool                   m_cfgGlobalCapture = false;
 
     // Start / stop recording hotkeys
     char                   m_cfgStartRecBuf[64]{};

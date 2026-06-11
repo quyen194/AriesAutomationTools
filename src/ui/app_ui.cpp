@@ -73,23 +73,6 @@ static bool IsHotkeyPressed(const std::string& hk) {
     return false;
 }
 
-// Produces a human-readable hotkey label, e.g. "ctrl+f9" -> "Ctrl+F9".
-static std::string FormatHotkeyLabel(const std::string& hk) {
-    if (hk.empty()) return "";
-    std::string result;
-    std::string s = hk;
-    size_t pos;
-    while ((pos = s.find('+')) != std::string::npos) {
-        std::string part = s.substr(0, pos);
-        s = s.substr(pos + 1);
-        if (!part.empty()) part[0] = (char)toupper((unsigned char)part[0]);
-        result += part + '+';
-    }
-    if (!s.empty()) s[0] = (char)toupper((unsigned char)s[0]);
-    result += s;
-    return result;
-}
-
 // Shared capture logic: scans for a key press, fills buf, sets outKey.
 // Returns true once a key is captured; sets capturing=false on Escape or capture.
 static bool DoCaptureHotkey(bool& capturing, char* buf, int bufSize, std::string& outKey) {
@@ -176,6 +159,14 @@ AppUI::AppUI() {
         ApplyStartRecordHotkey(hk);
         m_dirty = true;
     };
+
+    m_recOverlay.OnStopHotkeyChanged = [this](const std::string& hk) {
+        m_config.stop_record_hotkey = hk;
+        strncpy(m_cfgStopRecBuf, hk.c_str(), sizeof(m_cfgStopRecBuf) - 1);
+        m_cfgStopRecBuf[sizeof(m_cfgStopRecBuf) - 1] = '\0';
+        ApplyStopRecordHotkey(hk);
+        m_dirty = true;
+    };
 }
 
 void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
@@ -189,7 +180,6 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     m_engine.SetWorkflows(m_config.workflows);
 
     // Initialise all hotkey buffers
-    strncpy(m_hotkeyBuf,         m_config.global_hotkey.c_str(),       sizeof(m_hotkeyBuf)-1);
     strncpy(m_cfgStartRecBuf,    m_config.start_record_hotkey.c_str(), sizeof(m_cfgStartRecBuf)-1);
     strncpy(m_cfgStopRecBuf,     m_config.stop_record_hotkey.c_str(),  sizeof(m_cfgStopRecBuf)-1);
     strncpy(m_cfgStartAllBuf,    m_config.start_all_hotkey.c_str(),    sizeof(m_cfgStartAllBuf)-1);
@@ -198,9 +188,13 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     strncpy(m_cfgResumeAllBuf,   m_config.resume_all_hotkey.c_str(),   sizeof(m_cfgResumeAllBuf)-1);
 
     m_recOverlay.SetHotkey(m_config.start_record_hotkey);
-    m_engine.SetGlobalHotkey(m_config.global_hotkey);
+    m_recOverlay.SetStopHotkey(m_config.stop_record_hotkey);
     ApplyStartRecordHotkey(m_config.start_record_hotkey);
     ApplyStopRecordHotkey(m_config.stop_record_hotkey);
+    ApplyStartAllHotkey(m_config.start_all_hotkey);
+    ApplyStopAllHotkey(m_config.stop_all_hotkey);
+    ApplyPauseAllHotkey(m_config.pause_all_hotkey);
+    ApplyResumeAllHotkey(m_config.resume_all_hotkey);
     m_actEditor.SetWorkflows(&m_config.workflows);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
@@ -213,7 +207,6 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
 
     m_tray.Init(kIconPixels, 32, 32);
-    UpdateTrayHotkeyLabel();
     UpdateTrayWorkflows();
 }
 
@@ -372,7 +365,6 @@ void AppUI::DiscardConfig() {
         m_engine.StopAll();
         m_config = ConfigManager::Load(m_configPath);
         m_engine.SetWorkflows(m_config.workflows);
-        strncpy(m_hotkeyBuf,       m_config.global_hotkey.c_str(),       sizeof(m_hotkeyBuf)-1);
         strncpy(m_cfgStartRecBuf,  m_config.start_record_hotkey.c_str(), sizeof(m_cfgStartRecBuf)-1);
         strncpy(m_cfgStopRecBuf,   m_config.stop_record_hotkey.c_str(),  sizeof(m_cfgStopRecBuf)-1);
         strncpy(m_cfgStartAllBuf,  m_config.start_all_hotkey.c_str(),    sizeof(m_cfgStartAllBuf)-1);
@@ -380,10 +372,13 @@ void AppUI::DiscardConfig() {
         strncpy(m_cfgPauseAllBuf,  m_config.pause_all_hotkey.c_str(),    sizeof(m_cfgPauseAllBuf)-1);
         strncpy(m_cfgResumeAllBuf, m_config.resume_all_hotkey.c_str(),   sizeof(m_cfgResumeAllBuf)-1);
         m_recOverlay.SetHotkey(m_config.start_record_hotkey);
-        m_engine.SetGlobalHotkey(m_config.global_hotkey);
+        m_recOverlay.SetStopHotkey(m_config.stop_record_hotkey);
         ApplyStartRecordHotkey(m_config.start_record_hotkey);
         ApplyStopRecordHotkey(m_config.stop_record_hotkey);
-        UpdateTrayHotkeyLabel();
+        ApplyStartAllHotkey(m_config.start_all_hotkey);
+        ApplyStopAllHotkey(m_config.stop_all_hotkey);
+        ApplyPauseAllHotkey(m_config.pause_all_hotkey);
+        ApplyResumeAllHotkey(m_config.resume_all_hotkey);
         m_actEditor.SetWorkflows(&m_config.workflows);
         m_dirty = false;
         bool selValid = std::any_of(m_config.workflows.begin(), m_config.workflows.end(),
@@ -408,28 +403,22 @@ void AppUI::LoadConfig(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AppUI::Render() {
-    m_engine.PollHotkeys();
+    // Compute capture state before polling OS hotkeys so we can suppress them during capture
+    bool anyCapture = m_cfgStartRecCapture || m_cfgStopRecCapture
+                   || m_cfgStartAllCapture || m_cfgStopAllCapture
+                   || m_cfgPauseAllCapture || m_cfgResumeAllCapture
+                   || m_wfHkStartCapture || m_wfHkStopCapture
+                   || m_wfHkPauseCapture || m_wfHkResumeCapture
+                   || m_recOverlay.IsHotkeyCapturing();
+
+    // Only dispatch OS hotkey callbacks when no hotkey capture is in progress
+    if (!anyCapture) m_engine.PollHotkeys();
     PollTrayActions();
 
-    // Software hotkeys — only fire when no text input is active and no capture in progress
+    // Per-workflow software hotkeys — only when window is focused and not capturing
     {
         ImGuiIO& kio = ImGui::GetIO();
-        bool anyCapture = m_cfgGlobalCapture || m_cfgStartRecCapture || m_cfgStopRecCapture
-                       || m_cfgStartAllCapture || m_cfgStopAllCapture
-                       || m_cfgPauseAllCapture || m_cfgResumeAllCapture
-                       || m_wfHkStartCapture || m_wfHkStopCapture
-                       || m_wfHkPauseCapture || m_wfHkResumeCapture
-                       || m_recOverlay.IsHotkeyCapturing();
         if (!kio.WantTextInput && !anyCapture) {
-            if (!m_config.start_all_hotkey.empty() && IsHotkeyPressed(m_config.start_all_hotkey))
-                m_engine.StartAll();
-            if (!m_config.stop_all_hotkey.empty()  && IsHotkeyPressed(m_config.stop_all_hotkey))
-                m_engine.StopAll();
-            if (!m_config.pause_all_hotkey.empty()  && IsHotkeyPressed(m_config.pause_all_hotkey))
-                m_engine.PauseAll();
-            if (!m_config.resume_all_hotkey.empty() && IsHotkeyPressed(m_config.resume_all_hotkey))
-                m_engine.ResumeAll();
-            // Per-workflow hotkeys
             for (auto& wf : m_config.workflows) {
                 if (!wf.hotkey_start.empty()  && IsHotkeyPressed(wf.hotkey_start))
                     m_engine.StartWorkflow(wf.id);
@@ -582,13 +571,10 @@ void AppUI::RenderMenuBar() {
     }
 
     if (ImGui::BeginMenu("Workflows")) {
-        std::string hkLabel = FormatHotkeyLabel(m_config.global_hotkey);
-        const char* hkHint  = hkLabel.empty() ? nullptr : hkLabel.c_str();
-
-        if (ImGui::MenuItem("Start All", hkHint))  m_engine.StartAll();
+        if (ImGui::MenuItem("Start All"))  m_engine.StartAll();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
 
-        if (ImGui::MenuItem("Stop All", hkHint))   m_engine.StopAll();
+        if (ImGui::MenuItem("Stop All"))   m_engine.StopAll();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
 
         ImGui::Separator();
@@ -1041,13 +1027,13 @@ void AppUI::ApplyStopRecordHotkey(const std::string& key) {
     });
 }
 
-void AppUI::UpdateTrayHotkeyLabel() {
-    m_tray.SetGlobalHotkeyLabel(FormatHotkeyLabel(m_config.global_hotkey));
-}
+void AppUI::ApplyStartAllHotkey(const std::string& key)  { m_engine.SetStartAllHotkey(key); }
+void AppUI::ApplyStopAllHotkey(const std::string& key)   { m_engine.SetStopAllHotkey(key); }
+void AppUI::ApplyPauseAllHotkey(const std::string& key)  { m_engine.SetPauseAllHotkey(key); }
+void AppUI::ApplyResumeAllHotkey(const std::string& key) { m_engine.SetResumeAllHotkey(key); }
 
 void AppUI::RenderHotkeyConfigWindow() {
     if (!m_showHotkeyConfig) {
-        m_cfgGlobalCapture  = false;
         m_cfgStartRecCapture = m_cfgStopRecCapture = false;
         m_cfgStartAllCapture = m_cfgStopAllCapture = false;
         m_cfgPauseAllCapture = m_cfgResumeAllCapture = false;
@@ -1085,11 +1071,7 @@ void AppUI::RenderHotkeyConfigWindow() {
             ImGui::SetNextItemWidth(130);
             char inputId[32];
             snprintf(inputId, sizeof(inputId), "##hk_%s", id);
-            if (ImGui::InputText(inputId, buf, bufSz, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                cfgKey = buf;
-                if (onApply) onApply();
-                m_dirty = true;
-            }
+            ImGui::InputText(inputId, buf, bufSz, ImGuiInputTextFlags_ReadOnly);
             ImGui::SameLine();
             char capId[32];
             snprintf(capId, sizeof(capId), "Capture##%s", id);
@@ -1109,36 +1091,29 @@ void AppUI::RenderHotkeyConfigWindow() {
         }
     };
 
-    // ── Global hotkey ─────────────────────────────────────────────────────────
-    ImGui::SeparatorText("Global Hotkey (OS-level)");
-    ImGui::TextDisabled("Starts all (if idle) or toggles pause/resume all (if running)");
-    ImGui::Spacing();
-    renderHotkeyRow("global", m_hotkeyBuf, sizeof(m_hotkeyBuf),
-        m_cfgGlobalCapture, m_config.global_hotkey,
-        [&]{ m_engine.SetGlobalHotkey(m_config.global_hotkey); UpdateTrayHotkeyLabel(); },
-        false);
-
-    ImGui::Spacing();
-
     // ── Global action hotkeys ─────────────────────────────────────────────────
-    ImGui::SeparatorText("Global Action Hotkeys (window must be focused)");
+    ImGui::SeparatorText("Global Action Hotkeys (OS-level, work even when minimized)");
     ImGui::Spacing();
 
     ImGui::Text("Start All"); ImGui::SameLine(110);
     renderHotkeyRow("sa", m_cfgStartAllBuf, sizeof(m_cfgStartAllBuf),
-        m_cfgStartAllCapture, m_config.start_all_hotkey, nullptr);
+        m_cfgStartAllCapture, m_config.start_all_hotkey,
+        [&]{ ApplyStartAllHotkey(m_config.start_all_hotkey); });
 
     ImGui::Text("Stop All"); ImGui::SameLine(110);
     renderHotkeyRow("sta", m_cfgStopAllBuf, sizeof(m_cfgStopAllBuf),
-        m_cfgStopAllCapture, m_config.stop_all_hotkey, nullptr);
+        m_cfgStopAllCapture, m_config.stop_all_hotkey,
+        [&]{ ApplyStopAllHotkey(m_config.stop_all_hotkey); });
 
     ImGui::Text("Pause All"); ImGui::SameLine(110);
     renderHotkeyRow("pa", m_cfgPauseAllBuf, sizeof(m_cfgPauseAllBuf),
-        m_cfgPauseAllCapture, m_config.pause_all_hotkey, nullptr);
+        m_cfgPauseAllCapture, m_config.pause_all_hotkey,
+        [&]{ ApplyPauseAllHotkey(m_config.pause_all_hotkey); });
 
     ImGui::Text("Resume All"); ImGui::SameLine(110);
     renderHotkeyRow("ra", m_cfgResumeAllBuf, sizeof(m_cfgResumeAllBuf),
-        m_cfgResumeAllCapture, m_config.resume_all_hotkey, nullptr);
+        m_cfgResumeAllCapture, m_config.resume_all_hotkey,
+        [&]{ ApplyResumeAllHotkey(m_config.resume_all_hotkey); });
 
     ImGui::Spacing();
 
@@ -1162,9 +1137,8 @@ void AppUI::RenderHotkeyConfigWindow() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::TextDisabled("OS-level hotkeys work globally (no administrator rights required).");
+    ImGui::TextDisabled("All hotkeys work globally (no administrator rights required).");
     ImGui::TextDisabled("If a key does not respond, another application may own it.");
-    ImGui::TextDisabled("Window-focused hotkeys only fire when this window is in the foreground.");
     ImGui::Spacing();
 
     if (ImGui::Button("Close", ImVec2(90, 0))) m_showHotkeyConfig = false;
@@ -1200,10 +1174,7 @@ void AppUI::RenderWorkflowHotkeys(Workflow& wf) {
         } else {
             ImGui::SetNextItemWidth(120);
             char iid[48]; snprintf(iid, sizeof(iid), "##wfhk%s", label);
-            if (ImGui::InputText(iid, buf, bufSz, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                key = buf;
-                m_dirty = true;
-            }
+            ImGui::InputText(iid, buf, bufSz, ImGuiInputTextFlags_ReadOnly);
             ImGui::SameLine();
             char capid[48]; snprintf(capid, sizeof(capid), "Capture##wfhk%s", label);
             if (ImGui::SmallButton(capid)) cap = true;

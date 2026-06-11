@@ -146,11 +146,10 @@ struct Workflow {
 // ── App config (top-level) ────────────────────────────────────────────────────
 
 struct AppConfig {
-    std::string global_hotkey         = "f9";
     // Recording hotkeys (OS-level, work even when minimized)
     std::string start_record_hotkey   = "";
     std::string stop_record_hotkey    = "";
-    // Global action hotkeys (software-level, window must be focused)
+    // Global action hotkeys (OS-level, work even when minimized)
     std::string start_all_hotkey      = "";
     std::string stop_all_hotkey       = "";
     std::string pause_all_hotkey      = "";

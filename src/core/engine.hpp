@@ -39,8 +39,11 @@ public:
     bool AnyPaused() const;
     bool IsGloballyPaused() const { return m_globalPaused.load(); }
 
-    // Global hotkey toggle (start-all / pause-resume-all)
-    void SetGlobalHotkey(const std::string& key_name);
+    // Global action hotkeys (OS-level, work even when minimized)
+    void SetStartAllHotkey(const std::string& key_name);
+    void SetStopAllHotkey(const std::string& key_name);
+    void SetPauseAllHotkey(const std::string& key_name);
+    void SetResumeAllHotkey(const std::string& key_name);
     // Record hotkeys — fire callbacks when pressed, even when window is not focused
     void SetRecordHotkey(const std::string& key_name, std::function<void()> callback);
     void SetStopRecordHotkey(const std::string& key_name, std::function<void()> callback);
@@ -77,7 +80,10 @@ private:
     void MonitorLoop();
 
     TriggerCallback                             m_triggerCb;
-    std::string                                 m_hotkeyName;
+    std::string                                 m_startAllHotkeyName;
+    std::string                                 m_stopAllHotkeyName;
+    std::string                                 m_pauseAllHotkeyName;
+    std::string                                 m_resumeAllHotkeyName;
     std::string                                 m_recordHotkeyName;
     std::string                                 m_stopRecordHotkeyName;
     std::atomic<bool>                           m_globalPaused{false};
