@@ -171,12 +171,17 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             }
         }
 
-        bool allSel = (total > 0 && selCount == total);
-        if (ImGui::Checkbox("##selAll", &allSel)) {
-            std::fill(m_selection.begin(), m_selection.end(), allSel);
-            if (!allSel) m_lastClickedIdx = -1;
+        if (ImGui::SmallButton("All##sa")) {
+            std::fill(m_selection.begin(), m_selection.end(), true);
+            m_lastClickedIdx = -1;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all / deselect all");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("None##sa")) {
+            std::fill(m_selection.begin(), m_selection.end(), false);
+            m_lastClickedIdx = -1;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deselect all");
 
         if (selCount > 0) {
             // Move up/down (single selection only)
@@ -608,7 +613,7 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::RenderModal(Workflow& wf) {
-    ImGui::SetNextWindowSize(ImVec2(480, 560), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(480, 420), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("##actmodal", nullptr, ImGuiWindowFlags_NoResize)) return;
 
     ImGui::Text(m_editIdx < 0 ? "Add Activity" : "Edit Activity");
@@ -628,7 +633,12 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
         ImGui::SetTooltip("Uncheck to skip this activity without deleting it");
     ImGui::Separator();
 
+    float fieldsH = ImGui::GetContentRegionAvail().y
+                    - ImGui::GetFrameHeightWithSpacing() * 2.0f
+                    - ImGui::GetStyle().ItemSpacing.y * 2.0f;
+    ImGui::BeginChild("##actfields", ImVec2(0, fieldsH), false);
     RenderActivityFields(m_draft.data);
+    ImGui::EndChild();
 
     ImGui::Separator();
     if (ImGui::Button("OK", ImVec2(100, 0))) {
