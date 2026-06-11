@@ -10,11 +10,14 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 - **Multiple workflows** — each with its own activity list, window target, trigger, and repeat settings
 - **9 activity types** — mouse move, click, drag, scroll; key press, type string, wait, pixel check, run workflow
 - **Window targeting** — run actions on the global screen or scoped to a specific window (by title, class, or spy-pick)
-- **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period
+- **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period; optional start-delay waits until the system is idle before launching
 - **Record mode** — global hook captures real mouse/keyboard actions, review and append to any workflow
 - **3 start triggers** — Manual, Schedule (cron), or Pixel color watch
-- **Global pause hotkey** — default F9, fully configurable
-- **Portable single EXE** — no installer, statically linked, config stored next to the exe as `config.json`
+- **Per-workflow & global hotkeys** — bind Start / Stop / Pause / Resume to OS-level hotkeys per workflow, plus global Start All / Stop All / Pause All / Resume All / Start Rec / Stop Rec hotkeys
+- **Pause/Resume** — pause individual workflows or all at once without losing the current activity position; distinct from stopping
+- **Workflow status badges** — live indicators: `[~]` STARTING (cyan), `[R]` RUNNING (green), `[!]` INTERRUPTED by smart detection (orange), `[P]` PAUSED (yellow), `[W]` WAITING between repeats (teal)
+- **System tray** — minimize to tray with animated icon; right-click context menu for Show/Hide, Start/Stop/Pause/Resume All, and per-workflow controls
+- **Portable single EXE** — no installer, statically linked, config stored next to the exe as `config.json`; single-instance enforced
 
 ---
 
@@ -78,7 +81,7 @@ Run the executable. A `config.json` is loaded from the same folder. If it does n
 
 ### 3. Adding Activities
 
-Click **`+ Add`** in the Activities section to open the activity editor modal.
+Click **`+ Add`** in the Activities section to open the activity editor modal. To duplicate an existing activity, right-click it and choose **Duplicate**, or select one or more activities and click **Dup**.
 
 | Activity type | What it does |
 |---------------|-------------|
@@ -185,20 +188,30 @@ Examples:
 
 ### 7. Smart Detection
 
-When **Smart detection** is enabled, all running workflows pause automatically when the tool detects real user input (mouse/keyboard activity). They resume after the configured **Idle ms** period has elapsed with no input.
+When **Smart detection** is enabled, all running workflows pause automatically when the tool detects real user input (mouse/keyboard activity). They resume after the configured **Idle ms** period has elapsed with no input. A suspended workflow shows an `[!]` INTERRUPTED badge.
+
+**Start delay (ms)** — when set, clicking Start does not launch the workflow immediately. Instead it enters a `[~]` STARTING state and waits until the system has been idle for at least that many milliseconds. Any user input during this window resets the wait. A `[Cancel]` button appears in place of Start while waiting.
 
 This prevents the tool from fighting with your own mouse/keyboard during active use.
 
 ### 8. Running and Stopping
 
-- **`>> Start`** — start the selected workflow.
-- **`[Stop]`** — stop the selected workflow.
-- **`>> Start All`** / **`[Stop All]`** — start or stop every workflow at once.
-- **F9** (or your configured hotkey) — globally pause/resume all workflows without clicking.
+- **`>> Start`** / **`[Stop]`** — start or stop the selected workflow.
+- **`|| Pause`** / **`> Resume`** — pause or resume the selected workflow without losing its position.
+- **`>> Start All`** / **`[Stop All]`** / **`|| Pause All`** / **`> Resume All`** — apply to all workflows at once (also available in the **Workflows** menu and the tray context menu).
+- **F9** (or your configured hotkey) — if any workflows are running, toggles global pause/resume; if none are running, starts all enabled workflows.
 
-The hotkey can be changed in the top bar. Press Enter after editing to apply.
+**Status badges** in the workflow list show live state: `[~]` STARTING · `[R]` RUNNING · `[W]` WAITING (between repeats) · `[!]` INTERRUPTED (smart detection) · `[P]` PAUSED.
 
-### 9. Config file
+**Hotkeys** — open the **Hotkey Configuration** window to bind per-workflow Start/Stop/Pause/Resume hotkeys and global action hotkeys (Start All, Stop All, Pause All, Resume All, Start Rec, Stop Rec).
+
+### 9. System Tray
+
+When minimized to tray, AriesAutomationTools remains running in the background. Right-click the tray icon for a context menu with Show/Hide, Start/Stop/Pause/Resume All, and individual workflow controls. Left-click restores the window.
+
+Enable **Close to tray** via **File > Close to Tray** or the config to make the X button minimize rather than exit. Workflows keep running while the window is hidden.
+
+### 10. Config file
 
 `config.json` is auto-saved when you close the app if there are unsaved changes. To save manually: **File > Save Config**, or click the **`*`** save button in the top bar when it appears (it indicates unsaved changes).
 
