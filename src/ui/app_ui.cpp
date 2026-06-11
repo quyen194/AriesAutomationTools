@@ -473,6 +473,15 @@ void AppUI::RenderMenuBar() {
                               "instead of prompting to exit");
 
         ImGui::Separator();
+        if (ImGui::MenuItem("Single Instance", nullptr, m_config.single_instance)) {
+            m_config.single_instance = !m_config.single_instance;
+            m_dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("When checked, prevents a second copy of the app from launching.\n"
+                              "Takes effect on the next launch.");
+
+        ImGui::Separator();
         if (ImGui::MenuItem("Exit"))
             RequestQuit();
 

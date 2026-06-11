@@ -342,6 +342,7 @@ AppConfig ConfigManager::Load(const std::string& path) {
     cfg.record_hotkey  = root.value("record_hotkey",  "");
     cfg.close_to_tray    = root.value("close_to_tray",    false);
     cfg.minimize_to_tray = root.value("minimize_to_tray", false);
+    cfg.single_instance  = root.value("single_instance",  true);
 
     if (root.contains("workflows")) {
         for (auto& wj : root["workflows"])
@@ -357,6 +358,7 @@ void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     root["record_hotkey"] = config.record_hotkey;
     root["close_to_tray"]    = config.close_to_tray;
     root["minimize_to_tray"] = config.minimize_to_tray;
+    root["single_instance"]  = config.single_instance;
 
     json wfs = json::array();
     for (auto& w : config.workflows) wfs.push_back(SerializeWorkflow(w));

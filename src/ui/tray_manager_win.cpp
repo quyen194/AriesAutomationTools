@@ -188,11 +188,12 @@ struct TrayManager::Impl {
         if (!self) return DefWindowProc(hwnd, msg, wParam, lParam);
 
         if (msg == WM_TRAYICON) {
-            // With NOTIFYICON_VERSION_4: HIWORD(lParam) = event, LOWORD(lParam) = icon id
-            UINT ev = HIWORD(lParam);
+            // With NOTIFYICON_VERSION_4: LOWORD(lParam) = event, HIWORD(lParam) = icon id.
+            // Windows 7+ sends WM_CONTEXTMENU (not WM_RBUTTONUP) on right-click.
+            UINT ev = LOWORD(lParam);
             if (ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP) {
                 self->pending.push_back({TrayAction::ShowWindow, ""});
-            } else if (ev == WM_RBUTTONUP || ev == NIN_KEYSELECT) {
+            } else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU || ev == NIN_KEYSELECT) {
                 self->ShowContextMenu();
             }
             return 0;

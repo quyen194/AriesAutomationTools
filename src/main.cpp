@@ -1,13 +1,41 @@
 #include "ui/app_ui.hpp"
 #include "config/config_manager.hpp"
+#include "single_instance.hpp"
 #include "icon_data.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include <SDL.h>
 #include <cstdio>
+#include <string>
 
-int main(int /*argc*/, char** /*argv*/) {
+static constexpr const char* kInstanceName = "AriesAutomationTools_Instance";
+
+int main(int argc, char** argv) {
+    // Single-instance enforcement (skip if --allow-multiple is passed)
+    bool skipSingleInstance = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--allow-multiple") { skipSingleInstance = true; break; }
+
+    if (!skipSingleInstance) {
+        // Quick pre-read of config to respect the in-app toggle
+        bool wantSingle = true;
+        try {
+            auto cfg = ConfigManager::Load(ConfigManager::DefaultPath());
+            wantSingle = cfg.single_instance;
+        } catch (...) {}
+
+        if (wantSingle && !TryAcquireSingleInstance(kInstanceName)) {
+            SDL_Init(SDL_INIT_VIDEO);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,
+                "Aries Automation Tools",
+                "Another instance is already running.",
+                nullptr);
+            SDL_Quit();
+            return 1;
+        }
+    }
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL_Init error: %s\n", SDL_GetError());
         return 1;
@@ -120,5 +148,6 @@ int main(int /*argc*/, char** /*argv*/) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+    ReleaseSingleInstance();
     return 0;
 }

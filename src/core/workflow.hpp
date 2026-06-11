@@ -145,5 +145,6 @@ struct AppConfig {
     std::string record_hotkey  = "";   // hotkey to start/stop recording (empty = disabled)
     bool        close_to_tray    = false;
     bool        minimize_to_tray = false;
+    bool        single_instance  = true;
     std::vector<Workflow> workflows;
 };
