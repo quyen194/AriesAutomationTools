@@ -11,6 +11,7 @@
 #include <string>
 
 struct SDL_Window;
+struct SDL_Texture;
 
 class AppUI {
 public:
@@ -37,6 +38,7 @@ private:
     void RenderWindowTargetEditor(WindowTarget& wt);
     void RenderQuitConfirmModal();
     void RenderHotkeyConfigWindow();
+    void RenderAboutDialog();
 
     void AddWorkflow();
     void DuplicateWorkflow(const std::string& id);
@@ -66,7 +68,9 @@ private:
     bool                   m_dirty = false;
 
     SDL_Window*            m_sdlWindow  = nullptr;
+    SDL_Texture*           m_iconTexture = nullptr;
     bool                   m_windowVisible = true;
+    bool                   m_showAbout  = false;
 
     WorkflowEngine         m_engine;
     RecordEngine           m_recorder;

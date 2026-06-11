@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include <SDL.h>
 #include "icon_data.hpp"
+#include "imgui_impl_sdlrenderer2.h"
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -208,9 +209,22 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
 
     m_tray.Init(kIconPixels, 32, 32);
     UpdateTrayWorkflows();
+
+    // Build an SDL texture for the About dialog icon display
+    SDL_Renderer* renderer = SDL_GetRenderer(sdlWindow);
+    if (renderer) {
+        SDL_Surface* surf = SDL_CreateRGBSurfaceFrom(
+            const_cast<uint8_t*>(kIconPixels), 32, 32, 32, 32*4,
+            0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000);
+        if (surf) {
+            m_iconTexture = SDL_CreateTextureFromSurface(renderer, surf);
+            SDL_FreeSurface(surf);
+        }
+    }
 }
 
 void AppUI::Shutdown() {
+    if (m_iconTexture) { SDL_DestroyTexture(m_iconTexture); m_iconTexture = nullptr; }
     m_tray.Shutdown();
     m_triggers.Stop();
     m_engine.Shutdown();
@@ -263,16 +277,17 @@ void AppUI::UpdateTrayWorkflows() {
     m_tray.UpdateWorkflows(descs);
 }
 
-static void DrawAnimDot(uint8_t* pixels, int cx, int cy) {
+static void DrawAnimDot(uint8_t* pixels, int cx, int cy, int r, int g, int b) {
     for (int dy = -3; dy <= 3; ++dy) {
         for (int dx = -3; dx <= 3; ++dx) {
             if (dx*dx + dy*dy > 9) continue;
             int px = cx + dx, py = cy + dy;
             if (px < 0 || px >= 32 || py < 0 || py >= 32) continue;
             int i = (py * 32 + px) * 4;
-            pixels[i+0] = 60;
-            pixels[i+1] = 220;
-            pixels[i+2] = 60;
+            // soft blend: 70% dot, 30% original
+            pixels[i+0] = (uint8_t)(r * 7 / 10 + pixels[i+0] * 3 / 10);
+            pixels[i+1] = (uint8_t)(g * 7 / 10 + pixels[i+1] * 3 / 10);
+            pixels[i+2] = (uint8_t)(b * 7 / 10 + pixels[i+2] * 3 / 10);
             pixels[i+3] = 255;
         }
     }
@@ -297,17 +312,23 @@ void AppUI::UpdateTrayIcon() {
         m_animFrame    = 0;
         m_animLastTick = now;
     }
-    if (now - m_animLastTick < 250) return;
+    if (now - m_animLastTick < 220) return;
     m_animLastTick = now;
-    m_animFrame    = (m_animFrame + 1) % 4;
+    m_animFrame    = (m_animFrame + 1) % 8;
 
-    // 4-position rotating dot: top-right -> bottom-right -> bottom-left -> top-left
-    static const int kDotX[4] = {27, 27,  4,  4};
-    static const int kDotY[4] = { 4, 27, 27,  4};
+    // 8-position dot orbiting the ring clockwise: right -> bottom-right -> bottom -> ...
+    static const int kDotX[8] = {27, 24, 16,  8,  5,  8, 16, 24};
+    static const int kDotY[8] = {16, 24, 27, 24, 16,  8,  5,  8};
 
+    // Dot colors: leading dot is bright amber, trailing dot is dimmer cyan
     uint8_t frame[32*32*4];
     std::memcpy(frame, kIconPixels, sizeof(frame));
-    DrawAnimDot(frame, kDotX[m_animFrame], kDotY[m_animFrame]);
+
+    // Draw trailing dot (previous position, dimmer)
+    int prev = (m_animFrame + 7) % 8;
+    DrawAnimDot(frame, kDotX[prev], kDotY[prev], 60, 200, 230);
+    // Draw leading dot (current, bright amber)
+    DrawAnimDot(frame, kDotX[m_animFrame], kDotY[m_animFrame], 255, 190, 30);
     m_tray.UpdateIcon(frame, 32, 32);
 }
 
@@ -497,6 +518,7 @@ void AppUI::Render() {
 
     if (m_trigPickActive) RenderTriggerPickOverlay();
     RenderHotkeyConfigWindow();
+    RenderAboutDialog();
     m_recOverlay.Render(m_recorder);
 }
 
@@ -592,6 +614,11 @@ void AppUI::RenderMenuBar() {
         if (ImGui::MenuItem("Hotkeys...")) m_showHotkeyConfig = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Configure global and record hotkeys");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About...")) m_showAbout = true;
         ImGui::EndMenu();
     }
 
@@ -1192,4 +1219,69 @@ void AppUI::RenderWorkflowHotkeys(Workflow& wf) {
     row("Stop",   m_wfHkStopBuf,   sizeof(m_wfHkStopBuf),   m_wfHkStopCapture,   wf.hotkey_stop);
     row("Pause",  m_wfHkPauseBuf,  sizeof(m_wfHkPauseBuf),  m_wfHkPauseCapture,  wf.hotkey_pause);
     row("Resume", m_wfHkResumeBuf, sizeof(m_wfHkResumeBuf), m_wfHkResumeCapture, wf.hotkey_resume);
+}
+
+void AppUI::RenderAboutDialog() {
+    if (!m_showAbout) return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowFocus();
+    if (!ImGui::Begin("About Aries Automation Tools", &m_showAbout,
+                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+
+    // Icon + title side by side
+    if (m_iconTexture) {
+        ImGui::Image((ImTextureID)(intptr_t)m_iconTexture, ImVec2(64, 64));
+        ImGui::SameLine();
+    }
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.82f, 0.94f, 1.0f));
+    ImGui::Text("Aries Automation Tools");
+    ImGui::PopStyleColor();
+    ImGui::TextDisabled("Version 1.0");
+    ImGui::Spacing();
+    ImGui::TextDisabled("Portable desktop automation for Windows.");
+    ImGui::EndGroup();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::TextWrapped(
+        "Define workflows of mouse, keyboard, and wait activities "
+        "triggered by timer, cron schedule, or pixel-color events. "
+        "Single portable EXE - no installer required.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Credits table
+    auto row2 = [](const char* label, const char* value) {
+        ImGui::TextDisabled("%s", label);
+        ImGui::SameLine(90);
+        ImGui::Text("%s", value);
+    };
+    row2("Author:", "Cong Quyen Knight");
+    row2("Email:",  "quyen19492@gmail.com");
+    row2("Year:",   "2026");
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Built with Dear ImGui, SDL2, nlohmann/json.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    float btnW = 90.0f;
+    ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - btnW) * 0.5f +
+                          ImGui::GetCursorPosX());
+    if (ImGui::Button("Close", ImVec2(btnW, 0))) m_showAbout = false;
+
+    ImGui::End();
 }
