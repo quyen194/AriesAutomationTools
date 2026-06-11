@@ -13,7 +13,7 @@
 #  include <limits.h>
 #endif
 
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 namespace fs = std::filesystem;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
