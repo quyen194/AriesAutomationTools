@@ -7,6 +7,11 @@
 #include <vector>
 #include <string>
 
+// NIN_SELECT is not always defined in older SDKs
+#ifndef NIN_SELECT
+#define NIN_SELECT (WM_USER + 0)
+#endif
+
 // Menu ID layout:
 //   1001 = Exit
 //   1002 = StartAll
@@ -96,6 +101,12 @@ struct TrayManager::Impl {
     void ShowContextMenu() {
         POINT pt;
         GetCursorPos(&pt);
+
+        // SetForegroundWindow only works on a VISIBLE window. The helper hwnd is
+        // normally invisible (1×1, WS_EX_TOOLWINDOW), so we must show it first.
+        // Without this, TrackPopupMenuEx shows the menu but every item click is
+        // silently swallowed — the menu dismisses and returns 0.
+        ShowWindow(hwnd, SW_SHOW);
         SetForegroundWindow(hwnd);
 
         HMENU menu = CreatePopupMenu();
@@ -142,6 +153,9 @@ struct TrayManager::Impl {
             pt.x, pt.y, hwnd, nullptr);
         DestroyMenu(menu);
         PostMessage(hwnd, WM_NULL, 0, 0);
+
+        // Re-hide the helper window now that the menu is dismissed.
+        ShowWindow(hwnd, SW_HIDE);
 
         if (cmd == 0) return;
 
@@ -190,8 +204,9 @@ struct TrayManager::Impl {
         if (msg == WM_TRAYICON) {
             // With NOTIFYICON_VERSION_4: LOWORD(lParam) = event, HIWORD(lParam) = icon id.
             // Windows 7+ sends WM_CONTEXTMENU (not WM_RBUTTONUP) on right-click.
+            // VERSION_4 also replaces WM_LBUTTONUP with NIN_SELECT on single left-click.
             UINT ev = LOWORD(lParam);
-            if (ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP) {
+            if (ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP || ev == NIN_SELECT) {
                 self->pending.push_back({TrayAction::ShowWindow, ""});
             } else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU || ev == NIN_KEYSELECT) {
                 self->ShowContextMenu();
