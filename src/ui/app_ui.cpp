@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include "icon_data.hpp"
 #include <algorithm>
+#include <cstring>
 #include <sstream>
 #include <random>
 #include <iomanip>
@@ -178,7 +179,7 @@ bool AppUI::RequestQuit() {
 }
 
 void AppUI::OnWindowMinimized() {
-    if (m_config.close_to_tray) MinimizeToTray();
+    if (m_config.minimize_to_tray) MinimizeToTray();
 }
 
 void AppUI::MinimizeToTray() {
@@ -208,8 +209,57 @@ void AppUI::UpdateTrayWorkflows() {
     m_tray.UpdateWorkflows(descs);
 }
 
+static void DrawAnimDot(uint8_t* pixels, int cx, int cy) {
+    for (int dy = -3; dy <= 3; ++dy) {
+        for (int dx = -3; dx <= 3; ++dx) {
+            if (dx*dx + dy*dy > 9) continue;
+            int px = cx + dx, py = cy + dy;
+            if (px < 0 || px >= 32 || py < 0 || py >= 32) continue;
+            int i = (py * 32 + px) * 4;
+            pixels[i+0] = 60;
+            pixels[i+1] = 220;
+            pixels[i+2] = 60;
+            pixels[i+3] = 255;
+        }
+    }
+}
+
+void AppUI::UpdateTrayIcon() {
+    bool anyRunning = false;
+    for (auto& wf : m_config.workflows)
+        if (m_engine.IsRunning(wf.id)) { anyRunning = true; break; }
+
+    if (!anyRunning) {
+        if (m_animActive) {
+            m_animActive = false;
+            m_tray.UpdateIcon(kIconPixels, 32, 32);
+        }
+        return;
+    }
+
+    uint32_t now = SDL_GetTicks();
+    if (!m_animActive) {
+        m_animActive   = true;
+        m_animFrame    = 0;
+        m_animLastTick = now;
+    }
+    if (now - m_animLastTick < 250) return;
+    m_animLastTick = now;
+    m_animFrame    = (m_animFrame + 1) % 4;
+
+    // 4-position rotating dot: top-right -> bottom-right -> bottom-left -> top-left
+    static const int kDotX[4] = {27, 27,  4,  4};
+    static const int kDotY[4] = { 4, 27, 27,  4};
+
+    uint8_t frame[32*32*4];
+    std::memcpy(frame, kIconPixels, sizeof(frame));
+    DrawAnimDot(frame, kDotX[m_animFrame], kDotY[m_animFrame]);
+    m_tray.UpdateIcon(frame, 32, 32);
+}
+
 void AppUI::PollTrayActions() {
     UpdateTrayWorkflows();
+    UpdateTrayIcon();
     std::vector<TrayPendingAction> actions;
     m_tray.Poll(actions);
     for (auto& a : actions) {
@@ -406,10 +456,13 @@ void AppUI::RenderMenuBar() {
             ImGui::SetTooltip("No unsaved changes");
 
         ImGui::Separator();
-        if (ImGui::MenuItem("Minimize to Tray"))
-            MinimizeToTray();
+        if (ImGui::MenuItem("Minimize to Tray", nullptr, m_config.minimize_to_tray)) {
+            m_config.minimize_to_tray = !m_config.minimize_to_tray;
+            m_dirty = true;
+        }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hide the main window; the app keeps running in the system tray");
+            ImGui::SetTooltip("When checked, clicking the minimize button sends the window\n"
+                              "to the system tray instead of the taskbar");
 
         if (ImGui::MenuItem("Close to Tray", nullptr, m_config.close_to_tray)) {
             m_config.close_to_tray = !m_config.close_to_tray;

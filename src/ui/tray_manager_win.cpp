@@ -188,7 +188,8 @@ struct TrayManager::Impl {
         if (!self) return DefWindowProc(hwnd, msg, wParam, lParam);
 
         if (msg == WM_TRAYICON) {
-            UINT ev = LOWORD(lParam);
+            // With NOTIFYICON_VERSION_4: HIWORD(lParam) = event, LOWORD(lParam) = icon id
+            UINT ev = HIWORD(lParam);
             if (ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP) {
                 self->pending.push_back({TrayAction::ShowWindow, ""});
             } else if (ev == WM_RBUTTONUP || ev == NIN_KEYSELECT) {
@@ -272,6 +273,19 @@ void TrayManager::Shutdown() {
 
 void TrayManager::UpdateWorkflows(const std::vector<TrayWorkflowDesc>& wfs) {
     if (m_impl) m_impl->workflows = wfs;
+}
+
+void TrayManager::UpdateIcon(const uint8_t* pixels, int w, int h) {
+    if (!m_impl || !m_impl->added) return;
+    if (m_impl->hIcon) { DestroyIcon(m_impl->hIcon); m_impl->hIcon = nullptr; }
+    m_impl->hIcon = CreateIconFromRGBA(pixels, w, h);
+    NOTIFYICONDATAA nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd   = m_impl->hwnd;
+    nid.uID    = 1;
+    nid.uFlags = NIF_ICON;
+    nid.hIcon  = m_impl->hIcon;
+    Shell_NotifyIconA(NIM_MODIFY, &nid);
 }
 
 void TrayManager::Poll(std::vector<TrayPendingAction>& out) {

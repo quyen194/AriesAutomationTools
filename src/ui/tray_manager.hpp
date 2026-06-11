@@ -42,6 +42,9 @@ public:
     // Update workflow list shown in submenus (call before Poll or when workflows change)
     void UpdateWorkflows(const std::vector<TrayWorkflowDesc>& wfs);
 
+    // Swap the tray icon image (used for animation)
+    void UpdateIcon(const uint8_t* iconPixels, int iconW, int iconH);
+
 private:
     struct Impl;
     Impl* m_impl = nullptr;

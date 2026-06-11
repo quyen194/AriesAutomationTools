@@ -48,6 +48,7 @@ private:
     void RestoreFromTray();
     void PollTrayActions();
     void UpdateTrayWorkflows();
+    void UpdateTrayIcon();
 
     AppConfig              m_config;
     std::string            m_configPath;
@@ -83,4 +84,9 @@ private:
     // Quit confirmation
     bool          m_quitRequested  = false;
     bool          m_shouldQuit     = false;
+
+    // Tray icon animation
+    uint32_t      m_animLastTick = 0;
+    int           m_animFrame    = 0;
+    bool          m_animActive   = false;
 };
