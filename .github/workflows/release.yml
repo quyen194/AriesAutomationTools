@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    branches: [release/**]
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: AriesAutomationTools-windows
+            binary_path: build/Release/AriesAutomationTools.exe
+            binary_name: AriesAutomationTools.exe
+          - os: ubuntu-latest
+            artifact_name: AriesAutomationTools-linux
+            binary_path: build/AriesAutomationTools
+            binary_name: AriesAutomationTools-linux
+          - os: macos-latest
+            artifact_name: AriesAutomationTools-macos
+            binary_path: build/AriesAutomationTools
+            binary_name: AriesAutomationTools-macos
+
+    env:
+      CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CPM packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cpm
+          key: cpm-${{ matrix.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/CPM.cmake') }}
+          restore-keys: cpm-${{ matrix.os }}-
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxi-dev libxinerama-dev libxss-dev libxtst-dev \
+            libgl1-mesa-dev libasound2-dev libpulse-dev
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Rename binary (non-Windows)
+        if: runner.os != 'Windows'
+        run: cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ runner.os == 'Windows' && matrix.binary_path || matrix.binary_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Extract version from branch name
+        id: version
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          VERSION="${BRANCH#release/}"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=Release v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/AriesAutomationTools-windows/AriesAutomationTools.exe
+            artifacts/AriesAutomationTools-linux/AriesAutomationTools-linux
+            artifacts/AriesAutomationTools-macos/AriesAutomationTools-macos
