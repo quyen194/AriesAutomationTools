@@ -77,9 +77,13 @@ set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp
 )
 
-# ── Windows resource file (EXE icon) ─────────────────────────────────────────
+# ── Windows resource file (EXE icon + version info) ──────────────────────────
 if(WIN32)
     set(WIN_RESOURCES assets/resources.rc)
+    # Allow resources.rc to #include "version.h" from src/
+    set_source_files_properties(assets/resources.rc PROPERTIES
+        COMPILE_FLAGS "/I\"${CMAKE_SOURCE_DIR}/src\""
+    )
 else()
     set(WIN_RESOURCES "")
 endif()

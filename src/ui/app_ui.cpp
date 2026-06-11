@@ -1,4 +1,5 @@
 #include "app_ui.hpp"
+#include "version.h"
 #include "imgui.h"
 #include <SDL.h>
 #include "icon_data.hpp"
@@ -1292,9 +1293,9 @@ void AppUI::RenderAboutDialog() {
     }
     ImGui::BeginGroup();
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.82f, 0.94f, 1.0f));
-    ImGui::Text("Aries Automation Tools");
+    ImGui::Text(APP_PRODUCT_NAME_STR);
     ImGui::PopStyleColor();
-    ImGui::TextDisabled("Version 1.0");
+    ImGui::TextDisabled("Version " APP_VERSION_STR);
     ImGui::Spacing();
     ImGui::TextDisabled("Portable desktop automation for Windows.");
     ImGui::EndGroup();
