@@ -599,7 +599,7 @@ void AppUI::RenderTopBar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reload config from disk, discarding all changes");
     }
 
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 140);
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - 140.0f);
     const char* statusText;
     ImVec4 statusColor;
     if (anyRunning && anyPaused) {
@@ -659,10 +659,12 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     RenderTriggerEditor(wf.trigger, wf.id);
     ImGui::Separator();
 
+    ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("Repeat interval (ms)", &wf.repeat_interval_ms))
         { wf.repeat_interval_ms = std::max(100, wf.repeat_interval_ms); m_dirty = true; }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Wait this many ms between each run of the workflow");
+    ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("Repeat count (0=inf)", &wf.repeat_count))
         { wf.repeat_count = std::max(0, wf.repeat_count); m_dirty = true; }
     if (ImGui::IsItemHovered())
