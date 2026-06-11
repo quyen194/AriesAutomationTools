@@ -3,7 +3,7 @@
 
 void WorkflowListWidget::Render(
         const std::vector<Workflow>& workflows,
-        std::function<bool(const std::string&)> isRunning,
+        std::function<WorkflowStatus(const std::string&)> getStatus,
         const std::string& selectedId)
 {
     ImGui::BeginGroup();
@@ -13,29 +13,49 @@ void WorkflowListWidget::Render(
     float listH = ImGui::GetContentRegionAvail().y - 30.0f;
     ImGui::BeginChild("##wflist", ImVec2(0, listH), false);
     for (auto& wf : workflows) {
-        bool running  = isRunning(wf.id);
+        WorkflowStatus st = getStatus(wf.id);
         bool selected = (wf.id == selectedId);
 
-        // Status indicator: green=[R], yellow=[P] paused indicator handled via running color
-        ImGui::PushStyleColor(ImGuiCol_Text,
-            running ? ImVec4(0.2f, 0.9f, 0.2f, 1.f)
-                    : ImVec4(0.5f, 0.5f, 0.5f, 1.f));
-        ImGui::Text(running ? "[R]" : "[ ]");
+        // Status indicator badge
+        const char* badge;
+        ImVec4 badgeColor;
+        switch (st) {
+            case WorkflowStatus::Starting:
+                badge = "[~]"; badgeColor = ImVec4(0.3f, 0.8f, 1.0f, 1.f); break;
+            case WorkflowStatus::Running:
+                badge = "[R]"; badgeColor = ImVec4(0.2f, 0.9f, 0.2f, 1.f); break;
+            case WorkflowStatus::Suspended:
+                badge = "[S]"; badgeColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f); break;
+            case WorkflowStatus::Paused:
+                badge = "[P]"; badgeColor = ImVec4(1.0f, 0.85f, 0.0f, 1.f); break;
+            default:
+                badge = "[ ]"; badgeColor = ImVec4(0.5f, 0.5f, 0.5f, 1.f); break;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
+        ImGui::Text("%s", badge);
         ImGui::PopStyleColor();
         ImGui::SameLine();
 
-        // Disabled workflows appear dimmed; enabled ones use normal brightness
+        // Name color/hover based on status
+        bool active = (st != WorkflowStatus::Idle);
         if (!wf.enabled) {
-            ImGui::PushStyleColor(ImGuiCol_Text,         ImVec4(0.45f, 0.45f, 0.45f, 1.f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ImVec4(0.3f,  0.3f,  0.3f,  0.6f));
-        } else if (!running) {
-            // Enabled but not running: slightly brighter than disabled
-            ImGui::PushStyleColor(ImGuiCol_Text,         ImVec4(0.85f, 0.85f, 0.85f, 1.f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ImVec4(0.25f, 0.5f,  0.25f, 0.4f));
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.45f, 0.45f, 0.45f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f,  0.3f,  0.3f,  0.6f));
+        } else if (st == WorkflowStatus::Starting) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.5f,  0.9f,  1.0f,  1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,  0.4f,  0.6f,  0.5f));
+        } else if (st == WorkflowStatus::Running) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.3f,  1.0f,  0.3f,  1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,  0.6f,  0.1f,  0.5f));
+        } else if (st == WorkflowStatus::Suspended) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f,  0.7f,  0.3f,  1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.5f,  0.3f,  0.05f, 0.5f));
+        } else if (st == WorkflowStatus::Paused) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f,  0.9f,  0.2f,  1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.5f,  0.45f, 0.05f, 0.5f));
         } else {
-            // Running: bright green tint on the name
-            ImGui::PushStyleColor(ImGuiCol_Text,         ImVec4(0.3f,  1.0f,  0.3f,  1.f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ImVec4(0.1f,  0.6f,  0.1f,  0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.85f, 0.85f, 0.85f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.5f,  0.25f, 0.4f));
         }
 
         char label[256];
@@ -45,8 +65,14 @@ void WorkflowListWidget::Render(
         }
         ImGui::PopStyleColor(2);
 
-        if (ImGui::IsItemHovered() && !wf.enabled)
-            ImGui::SetTooltip("Workflow is disabled");
+        if (ImGui::IsItemHovered()) {
+            if (!wf.enabled)
+                ImGui::SetTooltip("Workflow is disabled");
+            else if (st == WorkflowStatus::Suspended)
+                ImGui::SetTooltip("Suspended by smart detection (user is active)");
+            else if (st == WorkflowStatus::Starting)
+                ImGui::SetTooltip("Waiting for user idle before starting");
+        }
     }
     ImGui::EndChild();
 

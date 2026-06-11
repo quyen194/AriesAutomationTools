@@ -131,8 +131,9 @@ struct Workflow {
     bool        enabled              = true;
     int         repeat_interval_ms   = 5000;
     int         repeat_count         = 0;    // 0 = infinite
-    bool        smart_detection      = true;
-    int         smart_detection_idle_ms = 2000;
+    bool        smart_detection              = true;
+    int         smart_detection_idle_ms      = 2000;
+    int         smart_detection_start_delay_ms = 1000;
     WindowTarget  window;
     StartTrigger  trigger;
     std::vector<Activity> activities;

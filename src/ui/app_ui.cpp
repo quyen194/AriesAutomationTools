@@ -498,7 +498,13 @@ void AppUI::Render() {
     ImGui::BeginChild("##left", ImVec2(leftW, 0), true);
     m_wfList.Render(
         m_config.workflows,
-        [this](const std::string& id){ return m_engine.IsRunning(id); },
+        [this](const std::string& id) -> WorkflowStatus {
+            if (m_engine.IsStarting(id))  return WorkflowStatus::Starting;
+            if (!m_engine.IsRunning(id))  return WorkflowStatus::Idle;
+            if (m_engine.IsPaused(id))    return WorkflowStatus::Paused;
+            if (m_engine.IsSuspended(id)) return WorkflowStatus::Suspended;
+            return WorkflowStatus::Running;
+        },
         m_selectedId);
     ImGui::EndChild();
 
@@ -694,12 +700,19 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     if (ImGui::Checkbox("Enabled", &wf.enabled)) m_dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable or disable this workflow");
 
-    bool running = m_engine.IsRunning(wf.id);
-    bool paused  = m_engine.IsPaused(wf.id);
+    bool running   = m_engine.IsRunning(wf.id);
+    bool paused    = m_engine.IsPaused(wf.id);
+    bool suspended = m_engine.IsSuspended(wf.id);
+    bool starting  = m_engine.IsStarting(wf.id);
     ImGui::SameLine();
-    if (!running) {
+    if (!running && !starting) {
         if (ImGui::Button(">> Start")) m_engine.StartWorkflow(wf.id);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start this workflow now");
+    } else if (starting) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.3f, 0.7f, 1.f));
+        if (ImGui::Button("[Cancel]")) m_engine.StopWorkflow(wf.id);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel the pending start");
+        ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
         if (ImGui::Button("[Stop]"))  m_engine.StopWorkflow(wf.id);
@@ -717,6 +730,29 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
             ImGui::PopStyleColor(2);
         }
     }
+
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - 160.0f);
+    const char* statusText;
+    ImVec4 statusColor;
+    if (starting) {
+        statusText  = "STARTING";
+        statusColor = ImVec4(0.3f, 0.8f, 1.0f, 1.f);
+    } else if (paused) {
+        statusText  = "PAUSED";
+        statusColor = ImVec4(1.f, 0.85f, 0.f, 1.f);
+    } else if (suspended) {
+        statusText  = "SUSPENDED";
+        statusColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f);
+    } else if (running) {
+        statusText  = "RUNNING";
+        statusColor = ImVec4(0.2f, 0.9f, 0.2f, 1.f);
+    } else {
+        statusText  = "IDLE";
+        statusColor = ImVec4(0.5f, 0.5f, 0.5f, 1.f);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, statusColor);
+    ImGui::Text("Workflow Status: %s", statusText);
+    ImGui::PopStyleColor();
 
     ImGui::Separator();
     RenderWindowTargetEditor(wf.window);
@@ -743,11 +779,17 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
             "Useful to avoid conflicts when you need to use the computer yourself.");
     if (wf.smart_detection) {
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(90);
         if (ImGui::InputInt("Idle ms##sd", &wf.smart_detection_idle_ms))
             { wf.smart_detection_idle_ms = std::max(100, wf.smart_detection_idle_ms); m_dirty = true; }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Resume the workflow after this many ms of user inactivity");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        if (ImGui::InputInt("Start delay ms##sd", &wf.smart_detection_start_delay_ms))
+            { wf.smart_detection_start_delay_ms = std::max(100, wf.smart_detection_start_delay_ms); m_dirty = true; }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Wait this many ms of user inactivity before the workflow starts");
     }
 
     ImGui::Separator();

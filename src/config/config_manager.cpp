@@ -239,8 +239,9 @@ static json SerializeWorkflow(const Workflow& w) {
     j["enabled"] = w.enabled;
     j["repeat_interval_ms"]      = w.repeat_interval_ms;
     j["repeat_count"]            = w.repeat_count;
-    j["smart_detection"]         = w.smart_detection;
-    j["smart_detection_idle_ms"] = w.smart_detection_idle_ms;
+    j["smart_detection"]                  = w.smart_detection;
+    j["smart_detection_idle_ms"]          = w.smart_detection_idle_ms;
+    j["smart_detection_start_delay_ms"]   = w.smart_detection_start_delay_ms;
 
     // Window target
     json win;
@@ -292,8 +293,9 @@ static Workflow DeserializeWorkflow(const json& j) {
     w.enabled                  = j.value("enabled", true);
     w.repeat_interval_ms       = j.value("repeat_interval_ms", 5000);
     w.repeat_count             = j.value("repeat_count", 0);
-    w.smart_detection          = j.value("smart_detection", true);
-    w.smart_detection_idle_ms  = j.value("smart_detection_idle_ms", 2000);
+    w.smart_detection                    = j.value("smart_detection", true);
+    w.smart_detection_idle_ms            = j.value("smart_detection_idle_ms", 2000);
+    w.smart_detection_start_delay_ms     = j.value("smart_detection_start_delay_ms", 1000);
 
     if (j.contains("window")) {
         auto& win = j["window"];

@@ -44,6 +44,8 @@ void WorkflowEngine::SetWorkflows(std::vector<Workflow> wfs) {
                 return ResolveCoords(wt, x, y);
             }));
     }
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    m_pendingStarts.assign(m_workflows.size(), false);
 }
 
 std::pair<int,int> WorkflowEngine::ResolveCoords(const WindowTarget& wt, int x, int y) {
@@ -67,23 +69,50 @@ Scheduler* WorkflowEngine::FindScheduler(const std::string& id) {
 
 void WorkflowEngine::StartWorkflow(const std::string& id) {
     if (m_globalPaused) return;
-    auto* s = FindScheduler(id);
-    if (s && !s->IsRunning()) s->Start();
+    for (size_t i = 0; i < m_workflows.size(); ++i) {
+        if (m_workflows[i].id != id) continue;
+        auto* s = m_schedulers[i].get();
+        if (s->IsRunning()) return;
+        if (m_workflows[i].smart_detection) {
+            std::lock_guard<std::mutex> lk(m_pendingMutex);
+            m_pendingStarts[i] = true;
+        } else {
+            s->Start();
+        }
+        return;
+    }
 }
 
 void WorkflowEngine::StopWorkflow(const std::string& id) {
-    auto* s = FindScheduler(id);
-    if (s) s->Stop();
+    for (size_t i = 0; i < m_workflows.size(); ++i) {
+        if (m_workflows[i].id != id) continue;
+        {
+            std::lock_guard<std::mutex> lk(m_pendingMutex);
+            m_pendingStarts[i] = false;
+        }
+        m_schedulers[i]->Stop();
+        return;
+    }
 }
 
 void WorkflowEngine::StartAll() {
     if (m_globalPaused) return;
-    for (size_t i = 0; i < m_workflows.size(); ++i)
-        if (m_workflows[i].enabled && !m_schedulers[i]->IsRunning())
+    for (size_t i = 0; i < m_workflows.size(); ++i) {
+        if (!m_workflows[i].enabled || m_schedulers[i]->IsRunning()) continue;
+        if (m_workflows[i].smart_detection) {
+            std::lock_guard<std::mutex> lk(m_pendingMutex);
+            m_pendingStarts[i] = true;
+        } else {
             m_schedulers[i]->Start();
+        }
+    }
 }
 
 void WorkflowEngine::StopAll() {
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMutex);
+        std::fill(m_pendingStarts.begin(), m_pendingStarts.end(), false);
+    }
     for (auto& s : m_schedulers) s->Stop();
 }
 
@@ -126,6 +155,21 @@ bool WorkflowEngine::IsRunning(const std::string& id) const {
 
 bool WorkflowEngine::AnyRunning() const {
     for (auto& s : m_schedulers) if (s->IsRunning()) return true;
+    return false;
+}
+
+bool WorkflowEngine::IsSuspended(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->IsSuspended();
+    return false;
+}
+
+bool WorkflowEngine::IsStarting(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i) {
+        if (m_workflows[i].id != id) continue;
+        std::lock_guard<std::mutex> lk(m_pendingMutex);
+        return m_pendingStarts[i];
+    }
     return false;
 }
 
@@ -197,16 +241,36 @@ void WorkflowEngine::MonitorLoop() {
     while (!m_monitorStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
+        if (!m_monitor) continue;
+        uint64_t idle_ms = m_monitor->MillisSinceLastUserActivity();
+
         int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
 
         for (size_t i = 0; i < m_workflows.size(); ++i) {
             auto& wf = m_workflows[i];
             auto& sc = m_schedulers[i];
+
+            // STARTING: pending start waiting for sufficient user idle
+            bool pending = false;
+            {
+                std::lock_guard<std::mutex> lk(m_pendingMutex);
+                pending = m_pendingStarts[i];
+            }
+            if (pending && !sc->IsRunning()) {
+                if (idle_ms >= (uint64_t)wf.smart_detection_start_delay_ms) {
+                    {
+                        std::lock_guard<std::mutex> lk(m_pendingMutex);
+                        m_pendingStarts[i] = false;
+                    }
+                    sc->Start();
+                }
+                continue;
+            }
+
+            // Running smart detection: suspend when user is active after start
             if (!wf.smart_detection || !sc->IsRunning()) continue;
 
-            uint64_t idle_ms = m_monitor->MillisSinceLastUserActivity();
-            // Compute when the last input event occurred (absolute time)
             int64_t last_active_ms = now_ms - (int64_t)idle_ms;
             // Only suspend if user was active AFTER this workflow started.
             // This prevents the "Start" button click itself from immediately

@@ -3,6 +3,8 @@
 #include <functional>
 #include <string>
 
+enum class WorkflowStatus { Idle, Starting, Running, Suspended, Paused };
+
 // Left-panel widget: renders the workflow list and add/dup/delete controls.
 struct WorkflowListWidget {
     // Called when selection changes; returns the selected workflow id.
@@ -12,8 +14,8 @@ struct WorkflowListWidget {
     std::function<void(const std::string& id)> OnDuplicate;
     std::function<void(const std::string& id)> OnDelete;
 
-    // Render the widget. Pass the full workflow list and the running-state checker.
+    // Render the widget. Pass the full workflow list and a per-workflow status provider.
     void Render(const std::vector<Workflow>& workflows,
-                std::function<bool(const std::string&)> isRunning,
+                std::function<WorkflowStatus(const std::string&)> getStatus,
                 const std::string& selectedId);
 };

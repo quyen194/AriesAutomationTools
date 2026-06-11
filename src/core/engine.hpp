@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <functional>
 
@@ -37,6 +38,8 @@ public:
     bool AnyRunning() const;
     bool IsPaused(const std::string& id) const;
     bool AnyPaused() const;
+    bool IsSuspended(const std::string& id) const;
+    bool IsStarting(const std::string& id) const;
     bool IsGloballyPaused() const { return m_globalPaused.load(); }
 
     // Global action hotkeys (OS-level, work even when minimized)
@@ -78,6 +81,10 @@ private:
     std::thread                                 m_monitorThread;
     std::atomic<bool>                           m_monitorStop{false};
     void MonitorLoop();
+
+    // Pending-start state: workflows waiting for user-idle before actually starting
+    mutable std::mutex                          m_pendingMutex;
+    std::vector<bool>                           m_pendingStarts;
 
     TriggerCallback                             m_triggerCb;
     std::string                                 m_startAllHotkeyName;
