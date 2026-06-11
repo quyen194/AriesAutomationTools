@@ -80,6 +80,7 @@ struct TrayManager::Impl {
 
     std::vector<TrayWorkflowDesc> workflows;
     std::vector<TrayPendingAction> pending;
+    std::string globalHotkeyLabel;
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -115,9 +116,17 @@ struct TrayManager::Impl {
         AppendMenuA(menu, MF_STRING, IDM_EXIT + 100, "Show/Hide Window");
         AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
 
-        // Bulk actions
-        AppendMenuA(menu, MF_STRING, IDM_STARTALL,  "Start All Workflows");
-        AppendMenuA(menu, MF_STRING, IDM_STOPALL,   "Stop All Workflows");
+        // Bulk actions — show global hotkey hint next to Start/Stop labels if set
+        {
+            std::string lbl = "Start All Workflows";
+            if (!globalHotkeyLabel.empty()) { lbl += '\t'; lbl += globalHotkeyLabel; }
+            AppendMenuA(menu, MF_STRING, IDM_STARTALL, lbl.c_str());
+        }
+        {
+            std::string lbl = "Stop All Workflows";
+            if (!globalHotkeyLabel.empty()) { lbl += '\t'; lbl += globalHotkeyLabel; }
+            AppendMenuA(menu, MF_STRING, IDM_STOPALL, lbl.c_str());
+        }
         AppendMenuA(menu, MF_STRING, IDM_PAUSEALL,  "Pause All Workflows");
         AppendMenuA(menu, MF_STRING, IDM_RESUMEALL, "Resume All Workflows");
 
@@ -302,6 +311,10 @@ void TrayManager::UpdateIcon(const uint8_t* pixels, int w, int h) {
     nid.uFlags = NIF_ICON;
     nid.hIcon  = m_impl->hIcon;
     Shell_NotifyIconA(NIM_MODIFY, &nid);
+}
+
+void TrayManager::SetGlobalHotkeyLabel(const std::string& label) {
+    if (m_impl) m_impl->globalHotkeyLabel = label;
 }
 
 void TrayManager::Poll(std::vector<TrayPendingAction>& out) {

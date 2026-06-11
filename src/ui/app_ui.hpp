@@ -35,6 +35,7 @@ private:
     void RenderTriggerEditor(StartTrigger& trig, const std::string& wfId);
     void RenderWindowTargetEditor(WindowTarget& wt);
     void RenderQuitConfirmModal();
+    void RenderHotkeyConfigWindow();
 
     void AddWorkflow();
     void DuplicateWorkflow(const std::string& id);
@@ -43,6 +44,11 @@ private:
     void DiscardConfig();
     void LoadConfig(const std::string& path);
     std::string EnsureId(Workflow& wf);
+
+    // Re-registers the record hotkey with a callback; call after any key change.
+    void ApplyRecordHotkey(const std::string& key);
+    // Pushes the formatted global hotkey label to the tray context menu.
+    void UpdateTrayHotkeyLabel();
 
     void MinimizeToTray();
     void RestoreFromTray();
@@ -71,6 +77,12 @@ private:
 
     char                   m_hotkeyBuf[64]{};
     bool                   m_hotkeyCapture = false;
+
+    // Hotkey config window
+    bool                   m_showHotkeyConfig  = false;
+    char                   m_recHotkeyBuf[64]{};
+    bool                   m_cfgGlobalCapture  = false;
+    bool                   m_cfgRecCapture     = false;
 
     // Pixel trigger position picker
     bool          m_trigPickActive = false;

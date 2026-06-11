@@ -156,6 +156,15 @@ void WorkflowEngine::SetGlobalHotkey(const std::string& key_name) {
     });
 }
 
+void WorkflowEngine::SetRecordHotkey(const std::string& key_name,
+                                       std::function<void()> callback) {
+    if (!m_hotkey) return;
+    if (!m_recordHotkeyName.empty()) m_hotkey->Unregister(m_recordHotkeyName);
+    m_recordHotkeyName = key_name;
+    if (!key_name.empty() && callback)
+        m_hotkey->Register(key_name, std::move(callback));
+}
+
 void WorkflowEngine::PollHotkeys() {
     if (m_hotkey) m_hotkey->PollEvents();
 }

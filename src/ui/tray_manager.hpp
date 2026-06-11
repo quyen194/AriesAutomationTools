@@ -45,6 +45,10 @@ public:
     // Swap the tray icon image (used for animation)
     void UpdateIcon(const uint8_t* iconPixels, int iconW, int iconH);
 
+    // Display the global hotkey string next to "Start All" in the context menu.
+    // Pass an empty string to remove the label.
+    void SetGlobalHotkeyLabel(const std::string& label);
+
 private:
     struct Impl;
     Impl* m_impl = nullptr;
