@@ -78,7 +78,8 @@ HotkeyManager               ← RegisterHotKey + PeekMessage dispatch (Windows)
 ```cpp
 using ActivityData = std::variant<
     MouseMoveActivity, MouseClickActivity, MouseDragActivity, MouseScrollActivity,
-    KeyPressActivity, TypeStringActivity, WaitActivity, PixelCheckActivity, RunWorkflowActivity
+    KeyPressActivity, TypeStringActivity, WaitActivity, PixelCheckActivity,
+    PixelRangeCheckActivity, RunWorkflowActivity, SystemActionActivity
 >;
 struct Activity  { std::string id; bool enabled; ActivityData data; };
 struct Workflow  { std::string id, name; bool enabled; int repeat_interval_ms, repeat_count;
@@ -152,7 +153,7 @@ Colors stored as `"#RRGGBB"` hex strings. All activity types serialized in `conf
 ## What has been built and working
 
 - Full data model, JSON config round-trip
-- All 9 activity types executed by scheduler
+- All 11 activity types executed by scheduler (incl. pixel_range_check region/image compare)
 - Smart detection (MonitorLoop suspends schedulers on user activity)
 - Global hotkey (F9 default, configurable)
 - Window targeting + spy-picker

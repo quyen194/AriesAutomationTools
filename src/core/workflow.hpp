@@ -84,6 +84,24 @@ struct PixelCheckActivity {
     int delay_ms = 0;
 };
 
+// Like PixelCheckActivity but over a rectangular region: a reference image is
+// captured at edit time (Pick start / Pick end + Capture sample) and compared
+// pixel-by-pixel against the live screen at run time.
+struct PixelRangeCheckActivity {
+    PositionMode pos_mode = PositionMode::Absolute;
+    int x1 = 0, y1 = 0;              // rect start corner (top-left after normalize)
+    int x2 = 0, y2 = 0;              // rect end corner   (bottom-right after normalize)
+    // Captured reference sample: packed 0xRRGGBB row-major, sample_w * sample_h
+    int sample_w = 0, sample_h = 0;
+    std::vector<uint32_t> sample;
+    int tolerance = 10;              // per-channel color tolerance
+    int match_percent = 95;          // % of pixels that must match
+    PixelCheckAction on_no_match = PixelCheckAction::Retry;
+    int retry_interval_ms = 500;
+    int retry_timeout_ms  = 10000;   // 0 = no timeout
+    int delay_ms = 0;
+};
+
 struct RunWorkflowActivity {
     std::string workflow_id;
     int delay_ms = 0;
@@ -104,6 +122,7 @@ using ActivityData = std::variant<
     TypeStringActivity,
     WaitActivity,
     PixelCheckActivity,
+    PixelRangeCheckActivity,
     RunWorkflowActivity,
     SystemActionActivity
 >;

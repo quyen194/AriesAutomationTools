@@ -113,6 +113,45 @@ public:
                 (uint32_t)GetBValue(c);
     }
 
+    PixelBuffer CaptureRegion(int x, int y, int w, int h) override {
+        PixelBuffer buf;
+        if (w <= 0 || h <= 0 || !m_dc) return buf;
+
+        HDC mem = CreateCompatibleDC(m_dc);
+        if (!mem) return buf;
+        HBITMAP bmp = CreateCompatibleBitmap(m_dc, w, h);
+        if (!bmp) { DeleteDC(mem); return buf; }
+
+        HGDIOBJ old = SelectObject(mem, bmp);
+        BitBlt(mem, 0, 0, w, h, m_dc, x, y, SRCCOPY);
+
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth       = w;
+        bi.bmiHeader.biHeight      = -h; // negative = top-down rows
+        bi.bmiHeader.biPlanes      = 1;
+        bi.bmiHeader.biBitCount    = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+
+        std::vector<uint8_t> raw((size_t)w * h * 4);
+        if (GetDIBits(mem, bmp, 0, h, raw.data(), &bi, DIB_RGB_COLORS) == h) {
+            buf.width  = w;
+            buf.height = h;
+            buf.pixels.resize((size_t)w * h);
+            for (size_t i = 0; i < buf.pixels.size(); ++i) {
+                // DIB memory layout is BGRA
+                buf.pixels[i] = ((uint32_t)raw[i*4+2] << 16) |
+                                ((uint32_t)raw[i*4+1] <<  8) |
+                                 (uint32_t)raw[i*4+0];
+            }
+        }
+
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        return buf;
+    }
+
 private:
     HDC m_dc = nullptr;
 };

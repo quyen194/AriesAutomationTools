@@ -58,6 +58,63 @@ static uint32_t HexToColor(const std::string& s) {
     if (!hex.empty() && hex[0] == '#') hex = hex.substr(1);
     return (uint32_t)std::stoul(hex, nullptr, 16);
 }
+// Base64 for pixel-range samples (3 bytes RGB per pixel)
+static const char kB64Chars[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static std::string SampleToBase64(const std::vector<uint32_t>& pixels) {
+    std::vector<uint8_t> bytes;
+    bytes.reserve(pixels.size() * 3);
+    for (uint32_t p : pixels) {
+        bytes.push_back((uint8_t)((p >> 16) & 0xFF));
+        bytes.push_back((uint8_t)((p >>  8) & 0xFF));
+        bytes.push_back((uint8_t)( p        & 0xFF));
+    }
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        uint32_t n = (uint32_t)bytes[i] << 16;
+        if (i + 1 < bytes.size()) n |= (uint32_t)bytes[i+1] << 8;
+        if (i + 2 < bytes.size()) n |= bytes[i+2];
+        out += kB64Chars[(n >> 18) & 63];
+        out += kB64Chars[(n >> 12) & 63];
+        out += (i + 1 < bytes.size()) ? kB64Chars[(n >> 6) & 63] : '=';
+        out += (i + 2 < bytes.size()) ? kB64Chars[ n       & 63] : '=';
+    }
+    return out;
+}
+
+static std::vector<uint32_t> Base64ToSample(const std::string& b64) {
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    std::vector<uint8_t> bytes;
+    bytes.reserve(b64.size() / 4 * 3);
+    int n = 0, bits = 0;
+    for (char c : b64) {
+        int v = val(c);
+        if (v < 0) continue; // skip '=' and whitespace
+        n = (n << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            bytes.push_back((uint8_t)((n >> bits) & 0xFF));
+        }
+    }
+    std::vector<uint32_t> pixels;
+    pixels.reserve(bytes.size() / 3);
+    for (size_t i = 0; i + 2 < bytes.size(); i += 3)
+        pixels.push_back(((uint32_t)bytes[i] << 16) |
+                         ((uint32_t)bytes[i+1] << 8) |
+                          (uint32_t)bytes[i+2]);
+    return pixels;
+}
+
 static std::string SystemActionToStr(SystemAction a) {
     switch (a) {
         case SystemAction::Restart:   return "restart";
@@ -143,6 +200,21 @@ static json SerializeActivity(const Activity& a) {
             j["x"] = v.x; j["y"]   = v.y;
             j["color"]              = ColorToHex(v.color_rgb);
             j["tolerance"]          = v.tolerance;
+            j["on_no_match"]        = PixelActionToStr(v.on_no_match);
+            j["retry_interval_ms"]  = v.retry_interval_ms;
+            j["retry_timeout_ms"]   = v.retry_timeout_ms;
+            j["delay_after_ms"]     = v.delay_ms;
+
+        } else if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
+            j["type"]               = "pixel_range_check";
+            j["position_mode"]      = PosModeToStr(v.pos_mode);
+            j["x1"] = v.x1; j["y1"] = v.y1;
+            j["x2"] = v.x2; j["y2"] = v.y2;
+            j["sample_w"]           = v.sample_w;
+            j["sample_h"]           = v.sample_h;
+            j["sample_b64"]         = SampleToBase64(v.sample);
+            j["tolerance"]          = v.tolerance;
+            j["match_percent"]      = v.match_percent;
             j["on_no_match"]        = PixelActionToStr(v.on_no_match);
             j["retry_interval_ms"]  = v.retry_interval_ms;
             j["retry_timeout_ms"]   = v.retry_timeout_ms;
@@ -235,6 +307,27 @@ static Activity DeserializeActivity(const json& j) {
         v.x = j.value("x", 0); v.y = j.value("y", 0);
         v.color_rgb         = HexToColor(j.value("color", "#FF0000"));
         v.tolerance         = j.value("tolerance", 10);
+        v.on_no_match       = StrToPixelAction(j.value("on_no_match", "retry"));
+        v.retry_interval_ms = j.value("retry_interval_ms", 500);
+        v.retry_timeout_ms  = j.value("retry_timeout_ms", 10000);
+        v.delay_ms          = j.value("delay_after_ms", 0);
+        a.data = v;
+
+    } else if (type == "pixel_range_check") {
+        PixelRangeCheckActivity v;
+        v.pos_mode          = StrToPosMode(j.value("position_mode", "absolute"));
+        v.x1 = j.value("x1", 0); v.y1 = j.value("y1", 0);
+        v.x2 = j.value("x2", 0); v.y2 = j.value("y2", 0);
+        v.sample_w          = j.value("sample_w", 0);
+        v.sample_h          = j.value("sample_h", 0);
+        v.sample            = Base64ToSample(j.value("sample_b64", ""));
+        if ((int)v.sample.size() != v.sample_w * v.sample_h) {
+            // Corrupt or truncated sample — drop it rather than mis-compare
+            v.sample.clear();
+            v.sample_w = v.sample_h = 0;
+        }
+        v.tolerance         = j.value("tolerance", 10);
+        v.match_percent     = j.value("match_percent", 95);
         v.on_no_match       = StrToPixelAction(j.value("on_no_match", "retry"));
         v.retry_interval_ms = j.value("retry_interval_ms", 500);
         v.retry_timeout_ms  = j.value("retry_timeout_ms", 10000);

@@ -148,6 +148,47 @@ void Scheduler::Run() {
                     }
                     if (matched) SleepInterruptible(v.delay_ms);
 
+                } else if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
+                    if (!g_pixel) return;
+                    if (v.sample.empty() || v.sample_w <= 0 || v.sample_h <= 0) {
+                        // No reference sample captured — nothing to compare, pass through
+                        SleepInterruptible(v.delay_ms);
+                        return;
+                    }
+                    int left = std::min(v.x1, v.x2);
+                    int top  = std::min(v.y1, v.y2);
+                    auto [ax, ay] = resolveCoords(v.pos_mode, left, top);
+
+                    PixelBuffer sample;
+                    sample.width  = v.sample_w;
+                    sample.height = v.sample_h;
+                    sample.pixels = v.sample;
+
+                    auto start = std::chrono::steady_clock::now();
+                    bool matched = false;
+                    while (!IsStopped()) {
+                        PixelBuffer cur =
+                            g_pixel->CaptureRegion(ax, ay, v.sample_w, v.sample_h);
+                        if (BuffersMatchPercent(sample, cur, v.tolerance) >= v.match_percent) {
+                            matched = true;
+                            break;
+                        }
+                        if (v.on_no_match == PixelCheckAction::SkipIteration) {
+                            skipIteration = true; break;
+                        }
+                        if (v.on_no_match == PixelCheckAction::StopWorkflow) {
+                            m_stopFlag = true; break;
+                        }
+                        // Retry
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                        if (v.retry_timeout_ms > 0 && elapsed >= v.retry_timeout_ms) {
+                            skipIteration = true; break;
+                        }
+                        SleepInterruptible(v.retry_interval_ms);
+                    }
+                    if (matched) SleepInterruptible(v.delay_ms);
+
                 } else if constexpr (std::is_same_v<T, RunWorkflowActivity>) {
                     // Chaining is handled by WorkflowEngine; Scheduler just sleeps
                     SleepInterruptible(v.delay_ms);

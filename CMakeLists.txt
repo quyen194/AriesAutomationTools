@@ -1,9 +1,22 @@
 cmake_minimum_required(VERSION 3.25)
+
+# Must be set before project(): minimum macOS version (13 = CGDisplay fallback,
+# 14+ = ScreenCaptureKit screenshot path, chosen at runtime via @available)
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version")
+endif()
+
 project(AriesAutomationTools LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_SHARED_LIBS OFF)
+
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
 
 # Force UTF-8 source/execution charset on MSVC (fixes codepage 932 issues)
 if(MSVC)
@@ -36,7 +49,7 @@ elseif(APPLE)
     set(PLATFORM_SOURCES
         src/input/macos/macos_input.cpp
         src/monitor/macos/macos_monitor.cpp
-        src/window/macos/macos_window.cpp
+        src/window/macos/macos_window.mm
         src/hotkey/macos/macos_hotkey.cpp
         src/ui/tray_manager_stub.cpp
         src/single_instance_unix.cpp
@@ -109,12 +122,18 @@ target_link_libraries(AriesAutomationTools PRIVATE
 )
 
 if(APPLE)
+    set_source_files_properties(src/window/macos/macos_window.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc"
+    )
     target_link_libraries(AriesAutomationTools PRIVATE
         "-framework CoreGraphics"
         "-framework CoreFoundation"
         "-framework Carbon"
         "-framework IOKit"
         "-framework AppKit"
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
     )
 elseif(UNIX)
     find_package(X11 REQUIRED)

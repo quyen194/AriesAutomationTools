@@ -4,6 +4,7 @@
 #  include <windows.h>
 #endif
 #include "activity_editor.hpp"
+#include "window/pixel_checker.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include <algorithm>
@@ -74,19 +75,21 @@ static std::string ImGuiKeyToKeyName(ImGuiKey key) {
 // ── Activity type names ───────────────────────────────────────────────────────
 static const char* kTypes[] = {
     "mouse_move","mouse_click","mouse_drag","mouse_scroll",
-    "key_press","type_string","wait","pixel_check","run_workflow","system_action"
+    "key_press","type_string","wait","pixel_check","pixel_range_check",
+    "run_workflow","system_action"
 };
 static int TypeIndex(const ActivityData& d) {
-    if (std::holds_alternative<MouseMoveActivity>(d))    return 0;
-    if (std::holds_alternative<MouseClickActivity>(d))   return 1;
-    if (std::holds_alternative<MouseDragActivity>(d))    return 2;
-    if (std::holds_alternative<MouseScrollActivity>(d))  return 3;
-    if (std::holds_alternative<KeyPressActivity>(d))     return 4;
-    if (std::holds_alternative<TypeStringActivity>(d))   return 5;
-    if (std::holds_alternative<WaitActivity>(d))         return 6;
-    if (std::holds_alternative<PixelCheckActivity>(d))   return 7;
-    if (std::holds_alternative<RunWorkflowActivity>(d))  return 8;
-    return 9; // SystemActionActivity
+    if (std::holds_alternative<MouseMoveActivity>(d))       return 0;
+    if (std::holds_alternative<MouseClickActivity>(d))      return 1;
+    if (std::holds_alternative<MouseDragActivity>(d))       return 2;
+    if (std::holds_alternative<MouseScrollActivity>(d))     return 3;
+    if (std::holds_alternative<KeyPressActivity>(d))        return 4;
+    if (std::holds_alternative<TypeStringActivity>(d))      return 5;
+    if (std::holds_alternative<WaitActivity>(d))            return 6;
+    if (std::holds_alternative<PixelCheckActivity>(d))      return 7;
+    if (std::holds_alternative<PixelRangeCheckActivity>(d)) return 8;
+    if (std::holds_alternative<RunWorkflowActivity>(d))     return 9;
+    return 10; // SystemActionActivity
 }
 static ActivityData DefaultData(int idx) {
     switch(idx) {
@@ -98,9 +101,31 @@ static ActivityData DefaultData(int idx) {
         case 5: return TypeStringActivity{};
         case 6: return WaitActivity{};
         case 7: return PixelCheckActivity{};
-        case 8: return RunWorkflowActivity{};
+        case 8: return PixelRangeCheckActivity{};
+        case 9: return RunWorkflowActivity{};
         default: return SystemActionActivity{};
     }
+}
+
+// Shared pixel checker for edit-time sample capture / color preview
+static IPixelChecker* EditorPixelChecker() {
+    static std::unique_ptr<IPixelChecker> s_checker = CreatePixelChecker();
+    return s_checker.get();
+}
+
+// Capture the reference image for a pixel-range check from the current screen.
+// Coordinates are treated as absolute screen positions at capture time.
+static bool CaptureRangeSample(PixelRangeCheckActivity& v) {
+    int left = std::min(v.x1, v.x2);
+    int top  = std::min(v.y1, v.y2);
+    int w    = std::abs(v.x2 - v.x1) + 1;
+    int h    = std::abs(v.y2 - v.y1) + 1;
+    PixelBuffer buf = EditorPixelChecker()->CaptureRegion(left, top, w, h);
+    if (buf.Empty()) return false;
+    v.sample_w = buf.width;
+    v.sample_h = buf.height;
+    v.sample   = std::move(buf.pixels);
+    return true;
 }
 
 static const char* BtnNames[]         = {"left","right","middle"};
@@ -134,6 +159,10 @@ static std::string ActivitySummary(const Activity& a) {
             snprintf(buf,sizeof(buf),"wait %dms +/-%dms",v.duration_ms,v.random_range_ms);
         else if constexpr (std::is_same_v<T,PixelCheckActivity>)
             snprintf(buf,sizeof(buf),"pixel_check #%06X (%d,%d)",v.color_rgb,v.x,v.y);
+        else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>)
+            snprintf(buf,sizeof(buf),"pixel_range (%d,%d)-(%d,%d) %s %d%%",
+                v.x1,v.y1,v.x2,v.y2,
+                v.sample.empty()?"no sample":"sampled",v.match_percent);
         else if constexpr (std::is_same_v<T,RunWorkflowActivity>)
             snprintf(buf,sizeof(buf),"run_workflow %s",v.workflow_id.c_str());
         else if constexpr (std::is_same_v<T,SystemActionActivity>) {
@@ -583,25 +612,33 @@ void ActivityEditorWidget::RenderPickOverlay() {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
 
-        const char* lbl = (m_pickStage == PickStage::DragTo) ? "Pick end pos" : "Pick pos";
+        const char* lbl = "Pick pos";
+        if (m_pickStage == PickStage::DragTo || m_pickStage == PickStage::RangeTo)
+            lbl = "Pick end pos";
+        else if (m_pickStage == PickStage::RangeFrom)
+            lbl = "Pick start pos";
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
 
-        bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data);
-        if (isPixelPick) {
-#if defined(_WIN32)
-            HDC dc = GetDC(nullptr);
-            if (dc) {
-                COLORREF c = GetPixel(dc, gx, gy);
-                ReleaseDC(nullptr, dc);
-                if (c != CLR_INVALID) {
-                    float r = GetRValue(c)/255.f, g2 = GetGValue(c)/255.f, b = GetBValue(c)/255.f;
-                    ImGui::ColorButton("##pcol", ImVec4(r, g2, b, 1.f),
-                        ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
-                        ImVec2(14, 14));
-                    ImGui::SameLine();
-                    ImGui::Text("#%02X%02X%02X", GetRValue(c), GetGValue(c), GetBValue(c));
-                }
+        if (m_pickStage == PickStage::RangeTo) {
+            if (auto* pr = std::get_if<PixelRangeCheckActivity>(&m_draft.data)) {
+                ImGui::Text("Rect: %d x %d",
+                            std::abs(gx - pr->x1) + 1, std::abs(gy - pr->y1) + 1);
             }
+        }
+
+        bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data) ||
+                           std::holds_alternative<PixelRangeCheckActivity>(m_draft.data);
+        if (isPixelPick) {
+#if !defined(__APPLE__)
+            // Per-frame color preview (on macOS a ScreenCaptureKit round-trip
+            // every frame would stall the UI thread, so skip it there)
+            uint32_t c = EditorPixelChecker()->GetPixelRGB(gx, gy);
+            float r = ((c>>16)&0xFF)/255.f, g2 = ((c>>8)&0xFF)/255.f, b = (c&0xFF)/255.f;
+            ImGui::ColorButton("##pcol", ImVec4(r, g2, b, 1.f),
+                ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
+                ImVec2(14, 14));
+            ImGui::SameLine();
+            ImGui::Text("#%06X", c);
 #endif
         }
 
@@ -627,18 +664,7 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
             v.x = x; v.y = y;
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
             v.x = x; v.y = y;
-#if defined(_WIN32)
-            HDC dc = GetDC(nullptr);
-            if (dc) {
-                COLORREF c = GetPixel(dc, x, y);
-                ReleaseDC(nullptr, dc);
-                if (c != CLR_INVALID) {
-                    v.color_rgb = ((uint32_t)GetRValue(c) << 16) |
-                                  ((uint32_t)GetGValue(c) << 8)  |
-                                   (uint32_t)GetBValue(c);
-                }
-            }
-#endif
+            v.color_rgb = EditorPixelChecker()->GetPixelRGB(x, y);
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             if (m_pickStage == PickStage::DragFrom) {
                 v.from_x = x; v.from_y = y;
@@ -646,6 +672,16 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
                 done = false;
             } else {
                 v.to_x = x; v.to_y = y;
+            }
+        } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
+            if (m_pickStage == PickStage::RangeFrom) {
+                v.x1 = x; v.y1 = y;
+                m_pickStage = PickStage::RangeTo;
+                done = false;
+            } else {
+                v.x2 = x; v.y2 = y;
+                // Grab the reference image right away from the picked rect
+                CaptureRangeSample(v);
             }
         }
     }, m_draft.data);
@@ -947,6 +983,83 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
             ImGui::SetNextItemWidth(120);
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms before the next activity");
+
+        } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
+            posMode(v.pos_mode);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Start X##prc", &v.x1);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Start Y##prc", &v.y1);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("End X##prc",   &v.x2);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("End Y##prc",   &v.y2);
+
+            if (ImGui::Button("Pick range##prc")) {
+                m_pickStage = PickStage::RangeFrom;
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Pick start corner, then end corner;\n"
+                                  "the rect is captured as the reference sample");
+            ImGui::SameLine();
+            if (ImGui::Button("Pick end##prc")) {
+                m_pickStage = PickStage::RangeTo;
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Re-pick only the end corner (re-captures the sample)");
+
+            if (v.sample.empty()) {
+                ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none)");
+            } else {
+                ImGui::Text("Sample: %d x %d (%d px)",
+                            v.sample_w, v.sample_h, v.sample_w * v.sample_h);
+            }
+            if (ImGui::Button("Capture sample##prc")) {
+                CaptureRangeSample(v);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Capture the rect from the current screen as the\n"
+                                  "reference image (uses coordinates as absolute)");
+            if (!v.sample.empty()) {
+                ImGui::SameLine();
+                if (ImGui::Button("Clear##prc")) {
+                    v.sample.clear();
+                    v.sample_w = v.sample_h = 0;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Discard the captured sample");
+            }
+
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Tolerance##prc", &v.tolerance);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
+            v.tolerance = std::max(0, std::min(255, v.tolerance));
+
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Match percent##prc", &v.match_percent);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Percentage of pixels that must match the sample\n"
+                                  "for the region to count as matching");
+            v.match_percent = std::max(0, std::min(100, v.match_percent));
+
+            int actionIdx = (v.on_no_match == PixelCheckAction::SkipIteration) ? 1
+                          : (v.on_no_match == PixelCheckAction::StopWorkflow)   ? 2 : 0;
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::Combo("On no match##prc", &actionIdx, PixelActionNames, 3))
+                v.on_no_match = (PixelCheckAction)actionIdx;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("What to do if the region does not match the sample");
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Retry interval (ms)##prc", &v.retry_interval_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How often to re-check the region when retrying");
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Retry timeout (ms, 0=inf)##prc", &v.retry_timeout_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Delay after (ms)##prc", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
 

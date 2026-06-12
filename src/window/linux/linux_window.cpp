@@ -135,15 +135,42 @@ public:
         XImage* img = XGetImage(m_dpy, DefaultRootWindow(m_dpy),
                                 x, y, 1, 1, AllPlanes, ZPixmap);
         if (!img) return 0;
-        unsigned long px = XGetPixel(img, 0, 0);
+        uint32_t rgb = PixelToRGB(img, XGetPixel(img, 0, 0));
         XDestroyImage(img);
-        uint8_t r = (px & img->red_mask)   >> 16;
-        uint8_t g = (px & img->green_mask) >>  8;
-        uint8_t b = (px & img->blue_mask);
-        return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        return rgb;
+    }
+
+    PixelBuffer CaptureRegion(int x, int y, int w, int h) override {
+        PixelBuffer buf;
+        if (w <= 0 || h <= 0) return buf;
+        XImage* img = XGetImage(m_dpy, DefaultRootWindow(m_dpy),
+                                x, y, (unsigned)w, (unsigned)h, AllPlanes, ZPixmap);
+        if (!img) return buf;
+        buf.width  = w;
+        buf.height = h;
+        buf.pixels.resize((size_t)w * h);
+        for (int row = 0; row < h; ++row)
+            for (int col = 0; col < w; ++col)
+                buf.pixels[(size_t)row * w + col] =
+                    PixelToRGB(img, XGetPixel(img, col, row));
+        XDestroyImage(img);
+        return buf;
     }
 
 private:
+    static uint32_t PixelToRGB(XImage* img, unsigned long px) {
+        // Shift each masked channel down to its low byte (handles any visual)
+        auto channel = [&](unsigned long mask) -> uint32_t {
+            if (!mask) return 0;
+            unsigned long v = px & mask;
+            while (!(mask & 1)) { mask >>= 1; v >>= 1; }
+            return (uint32_t)(v & 0xFF);
+        };
+        return (channel(img->red_mask)   << 16) |
+               (channel(img->green_mask) <<  8) |
+                channel(img->blue_mask);
+    }
+
     Display* m_dpy = nullptr;
 };
 

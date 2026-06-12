@@ -23,7 +23,7 @@ private:
     int m_lastClickedIdx   = -1;
 
     // Coordinate picker state
-    enum class PickStage { None, Single, DragFrom, DragTo };
+    enum class PickStage { None, Single, DragFrom, DragTo, RangeFrom, RangeTo };
     PickStage m_pickStage = PickStage::None;
 
     // Key capture state
