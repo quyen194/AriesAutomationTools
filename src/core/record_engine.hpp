@@ -4,7 +4,9 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -44,7 +46,9 @@ public:
 
 private:
     std::vector<RecordedEvent> m_events;
+    std::mutex                 m_eventsMutex;
     std::atomic<bool>          m_recording{false};
+    std::thread                m_hookThread;
     uint64_t                   m_ignoreHandle = 0;
     int                        m_lastMoveX = -9999;
     int                        m_lastMoveY = -9999;
@@ -55,8 +59,9 @@ private:
 #if defined(_WIN32)
     static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-    void* m_mouseHook   = nullptr;
-    void* m_keyHook     = nullptr;
+    void*                m_mouseHook     = nullptr;
+    void*                m_keyHook       = nullptr;
+    std::atomic<DWORD>   m_hookThreadId  {0};
     static RecordEngine* s_instance;
 #endif
 };

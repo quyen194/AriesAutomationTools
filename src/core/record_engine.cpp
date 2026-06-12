@@ -57,9 +57,10 @@ LRESULT CALLBACK RecordEngine::MouseProc(int nCode, WPARAM wParam, LPARAM lParam
             case WM_MOUSEMOVE: {
                 int dx = ev.x - s_instance->m_lastMoveX;
                 int dy = ev.y - s_instance->m_lastMoveY;
-                if (dx*dx + dy*dy >= 100) { // only record if moved >10px
+                if (dx*dx + dy*dy >= 100) {
                     ev.type = RecordedEvent::Type::MouseMove;
-                    s_instance->m_events.push_back(ev);
+                    { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+                      s_instance->m_events.push_back(ev); }
                     s_instance->m_lastMoveX = ev.x;
                     s_instance->m_lastMoveY = ev.y;
                 }
@@ -67,21 +68,25 @@ LRESULT CALLBACK RecordEngine::MouseProc(int nCode, WPARAM wParam, LPARAM lParam
             }
             case WM_LBUTTONDOWN:
                 ev.type = RecordedEvent::Type::MouseClick; ev.button = 0;
-                s_instance->m_events.push_back(ev);
+                { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+                  s_instance->m_events.push_back(ev); }
                 break;
             case WM_RBUTTONDOWN:
                 ev.type = RecordedEvent::Type::MouseClick; ev.button = 1;
-                s_instance->m_events.push_back(ev);
+                { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+                  s_instance->m_events.push_back(ev); }
                 break;
             case WM_MBUTTONDOWN:
                 ev.type = RecordedEvent::Type::MouseClick; ev.button = 2;
-                s_instance->m_events.push_back(ev);
+                { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+                  s_instance->m_events.push_back(ev); }
                 break;
             case WM_MOUSEWHEEL: {
                 short delta = HIWORD(info->mouseData);
                 ev.type = RecordedEvent::Type::MouseScroll;
                 ev.scroll_dy = delta / WHEEL_DELTA;
-                s_instance->m_events.push_back(ev);
+                { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+                  s_instance->m_events.push_back(ev); }
                 break;
             }
             default: break;
@@ -110,7 +115,8 @@ LRESULT CALLBACK RecordEngine::KeyboardProc(int nCode, WPARAM wParam, LPARAM lPa
                 ev.modifiers.push_back("shift");
             if (held(VK_MENU) && ev.key_name != "alt" && ev.key_name != "lalt")
                 ev.modifiers.push_back("alt");
-            s_instance->m_events.push_back(ev);
+            { std::lock_guard<std::mutex> lk(s_instance->m_eventsMutex);
+              s_instance->m_events.push_back(ev); }
         }
     }
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
@@ -125,12 +131,34 @@ void RecordEngine::Start() {
     m_lastMoveX = -9999;
     m_lastMoveY = -9999;
     m_recording = true;
-    InstallHooks();
+
+#if defined(_WIN32)
+    m_hookThreadId.store(0);
+    m_hookThread = std::thread([this]() {
+        InstallHooks();
+        // Signal ready only after hooks are installed (message queue now exists)
+        m_hookThreadId.store(GetCurrentThreadId());
+        MSG msg;
+        while (GetMessage(&msg, nullptr, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        RemoveHooks();
+    });
+#endif
 }
 
 void RecordEngine::Stop() {
     m_recording = false;
-    RemoveHooks();
+#if defined(_WIN32)
+    if (m_hookThread.joinable()) {
+        // Spin-wait until the hook thread has created its message queue
+        DWORD tid;
+        while ((tid = m_hookThreadId.load()) == 0) {}
+        PostThreadMessageA(tid, WM_QUIT, 0, 0);
+        m_hookThread.join();
+    }
+#endif
 }
 
 void RecordEngine::InstallHooks() {
