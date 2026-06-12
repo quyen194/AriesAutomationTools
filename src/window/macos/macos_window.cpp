@@ -110,9 +110,11 @@ std::unique_ptr<IWindowFinder> CreateWindowFinder() {
 class MacOSPixelChecker : public IPixelChecker {
 public:
     uint32_t GetPixelRGB(int x, int y) override {
-        CGImageRef shot = CGDisplayCreateImageForRect(
-            CGMainDisplayID(),
-            CGRectMake((CGFloat)x, (CGFloat)y, 1.0, 1.0));
+        CGImageRef shot = CGWindowListCreateImage(
+            CGRectMake((CGFloat)x, (CGFloat)y, 1.0, 1.0),
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+            kCGWindowImageDefault);
         if (!shot) return 0;
 
         CFDataRef data = CGDataProviderCopyData(CGImageGetDataProvider(shot));

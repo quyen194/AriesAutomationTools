@@ -4,13 +4,13 @@
 #include <memory>
 #include <cstdint>
 
-struct Rect { int x, y, w, h; };
+struct WinRect { int x, y, w, h; };
 
 struct WindowInfo {
     uint64_t    handle = 0;
     std::string title;
     std::string class_name;
-    Rect        rect{};
+    WinRect     rect{};
 };
 
 struct IWindowFinder {
