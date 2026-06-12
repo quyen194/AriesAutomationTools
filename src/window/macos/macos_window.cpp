@@ -110,21 +110,45 @@ std::unique_ptr<IWindowFinder> CreateWindowFinder() {
 class MacOSPixelChecker : public IPixelChecker {
 public:
     uint32_t GetPixelRGB(int x, int y) override {
-        CGImageRef shot = CGWindowListCreateImage(
-            CGRectMake((CGFloat)x, (CGFloat)y, 1.0, 1.0),
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID,
-            kCGWindowImageDefault);
+        // CGWindowListCreateImage was removed from the macOS 15 SDK; use the
+        // per-display capture API instead (deprecated but still available).
+        CGPoint pt = CGPointMake((CGFloat)x, (CGFloat)y);
+        CGDirectDisplayID display = CGMainDisplayID();
+        uint32_t count = 0;
+        CGGetDisplaysWithPoint(pt, 1, &display, &count);
+
+        CGRect bounds = CGDisplayBounds(display);
+        CGRect rect = CGRectMake(pt.x - bounds.origin.x, pt.y - bounds.origin.y, 1.0, 1.0);
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        CGImageRef shot = CGDisplayCreateImageForRect(display, rect);
+#pragma clang diagnostic pop
         if (!shot) return 0;
 
+        CGBitmapInfo bmpInfo = CGImageGetBitmapInfo(shot);
         CFDataRef data = CGDataProviderCopyData(CGImageGetDataProvider(shot));
         CGImageRelease(shot);
         if (!data) return 0;
 
         const uint8_t* ptr = CFDataGetBytePtr(data);
         uint32_t result = 0;
-        if (ptr) {
-            result = ((uint32_t)ptr[0] << 16) | ((uint32_t)ptr[1] << 8) | ptr[2];
+        if (ptr && CFDataGetLength(data) >= 4) {
+            // Byte layout depends on the image's byte order + alpha position.
+            CGImageAlphaInfo alpha = (CGImageAlphaInfo)(bmpInfo & kCGBitmapAlphaInfoMask);
+            bool alphaFirst = alpha == kCGImageAlphaPremultipliedFirst ||
+                              alpha == kCGImageAlphaFirst ||
+                              alpha == kCGImageAlphaNoneSkipFirst;
+            bool little = (bmpInfo & kCGBitmapByteOrderMask) == kCGBitmapByteOrder32Little;
+            int r, g, b;
+            if (little) {
+                if (alphaFirst) { b = 0; g = 1; r = 2; }   // BGRA
+                else            { b = 1; g = 2; r = 3; }   // ABGR
+            } else {
+                if (alphaFirst) { r = 1; g = 2; b = 3; }   // ARGB
+                else            { r = 0; g = 1; b = 2; }   // RGBA
+            }
+            result = ((uint32_t)ptr[r] << 16) | ((uint32_t)ptr[g] << 8) | ptr[b];
         }
         CFRelease(data);
         return result;
