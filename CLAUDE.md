@@ -27,7 +27,8 @@ If the index seems stale after large refactors, run `index_repository(repo_path=
 
 A portable C++17 desktop automation tool (Windows/Linux/macOS). Users define "workflows" of
 ordered mouse/keyboard/wait activities that execute on a timer, cron schedule, or pixel-color
-trigger. Built with Dear ImGui + SDL2 (UI), nlohmann/json (config), CMake + CPM.cmake (build).
+trigger. Built with Dear ImGui + SDL2 (UI), nlohmann/json (config), CMake (build). All three
+libraries are git submodules in `third_party/` — no internet needed after `git submodule update --init --recursive`.
 Target: single portable EXE, statically linked.
 
 ## Build command (Windows)
@@ -142,7 +143,7 @@ Colors stored as `"#RRGGBB"` hex strings. All activity types serialized in `conf
 | Add new platform support | Add platform source set in `CMakeLists.txt`, implement all 4 interfaces |
 | Change window layout | `src/ui/app_ui.cpp` |
 
-## Dependencies (fetched by CPM on first build, cached in build/_deps)
+## Dependencies (git submodules in `third_party/`)
 
 - Dear ImGui v1.91.0 — `${imgui_SOURCE_DIR}` in CMakeLists
 - SDL2 2.30.3 — static, `SDL2::SDL2-static` + `SDL2::SDL2main`

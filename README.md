@@ -29,16 +29,17 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 |------|----------------|
 | CMake | 3.25 |
 | C++ compiler | MSVC 2019+ / GCC 11+ / Clang 14+ |
-| Internet | Required on first build (CPM downloads SDL2, ImGui, nlohmann/json) |
 
 ### Windows (Visual Studio)
 
 ```bat
-git clone <repo-url> AriesAutomationTools
+git clone --recurse-submodules <repo-url> AriesAutomationTools
 cd AriesAutomationTools
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
+
+> If you cloned without `--recurse-submodules`, run `git submodule update --init --recursive` first.
 
 Executable: `build\Release\AriesAutomationTools.exe`
 Config file: `build\Release\config.json` (auto-copied on build)
@@ -50,6 +51,7 @@ Config file: `build\Release\config.json` (auto-copied on build)
 sudo apt install libx11-dev libxtst-dev   # Debian/Ubuntu
 sudo dnf install libX11-devel libXtst-devel  # Fedora
 
+git submodule update --init --recursive
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
@@ -222,9 +224,11 @@ Enable **Close to tray** via **File > Close to Tray** or the config to make the 
 
 ```
 AriesAutomationTools/
-├── CMakeLists.txt              # Build definition, CPM dependency management
-├── cmake/
-│   └── CPM.cmake               # CPM package manager bootstrap
+├── CMakeLists.txt              # Build definition
+├── third_party/
+│   ├── imgui/                  # Dear ImGui v1.91.0 (git submodule)
+│   ├── SDL2/                   # SDL2 2.30.3 (git submodule)
+│   └── nlohmann_json/          # nlohmann/json 3.11.3 (git submodule)
 ├── assets/
 │   └── config.json             # Default config (copied next to exe on build)
 └── src/
@@ -320,7 +324,7 @@ AriesAutomationTools/
 
 ---
 
-## Dependencies (auto-downloaded by CPM on first build)
+## Dependencies (git submodules in `third_party/`)
 
 | Library | Version | Purpose |
 |---------|---------|---------|

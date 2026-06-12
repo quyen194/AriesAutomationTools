@@ -10,32 +10,17 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-include(cmake/CPM.cmake)
+# ── Dependencies (git submodules in third_party/) ─────────────────────────────
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON  CACHE BOOL "" FORCE)
+set(SDL_TEST   OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/SDL2)
 
-# ── Dependencies ──────────────────────────────────────────────────────────────
-CPMAddPackage(
-    NAME imgui
-    GITHUB_REPOSITORY ocornut/imgui
-    GIT_TAG v1.91.0
-    DOWNLOAD_ONLY YES
-)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/nlohmann_json)
 
-CPMAddPackage(
-    NAME SDL2
-    GITHUB_REPOSITORY libsdl-org/SDL
-    GIT_TAG release-2.30.3
-    OPTIONS
-        "SDL_SHARED OFF"
-        "SDL_STATIC ON"
-        "SDL_TEST OFF"
-)
-
-CPMAddPackage(
-    NAME nlohmann_json
-    GITHUB_REPOSITORY nlohmann/json
-    VERSION 3.11.3
-    OPTIONS "JSON_BuildTests OFF"
-)
+# ImGui has no CMakeLists — compile its sources directly (same as before)
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
 
 # ── Platform sources ──────────────────────────────────────────────────────────
 if(WIN32)
@@ -69,12 +54,12 @@ endif()
 
 # ── ImGui sources ─────────────────────────────────────────────────────────────
 set(IMGUI_SOURCES
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp
 )
 
 # ── Windows resource file (EXE icon + version info) ──────────────────────────
@@ -113,8 +98,8 @@ endif()
 
 target_include_directories(AriesAutomationTools PRIVATE
     src
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 target_link_libraries(AriesAutomationTools PRIVATE
