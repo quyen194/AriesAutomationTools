@@ -8,8 +8,8 @@
 
 #define APP_VERSION_STR        "1.0.0"
 #define APP_PRODUCT_NAME_STR   "Aries Automation Tools"
-#define APP_COMPANY_STR        "Cong Quyen Knight"
-#define APP_COPYRIGHT_STR      "Copyright (C) 2026 Cong Quyen Knight"
+#define APP_COMPANY_STR        "Aries Inc"
+#define APP_COPYRIGHT_STR      "Copyright (C) 2026 Aries Inc"
 #define APP_INTERNAL_NAME_STR  "AriesAutomationTools"
 #define APP_FILENAME_STR       "AriesAutomationTools.exe"
 #define APP_DESCRIPTION_STR    "Portable desktop automation tool"

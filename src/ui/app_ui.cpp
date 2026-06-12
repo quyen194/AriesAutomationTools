@@ -1319,7 +1319,8 @@ void AppUI::RenderAboutDialog() {
         ImGui::SameLine(90);
         ImGui::Text("%s", value);
     };
-    row2("Author:", "Cong Quyen Knight");
+    row2("Company:", "Aries Inc");
+    row2("Author:",  "Cong Quyen Knight");
     row2("Email:",  "quyen19492@gmail.com");
     row2("Year:",   "2026");
 
