@@ -15,18 +15,10 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
 
-    env:
-      CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Cache CPM packages
-        uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.cpm
-          key: cpm-${{ matrix.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/CPM.cmake') }}
-          restore-keys: cpm-${{ matrix.os }}-
+          submodules: recursive
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
