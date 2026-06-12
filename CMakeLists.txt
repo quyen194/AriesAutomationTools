@@ -133,7 +133,7 @@ if(APPLE)
     )
 elseif(UNIX)
     find_package(X11 REQUIRED)
-    target_link_libraries(AriesAutomationTools PRIVATE X11::X11 Xtst)
+    target_link_libraries(AriesAutomationTools PRIVATE X11::X11 X11::Xss Xtst)
 endif()
 
 # Copy config.json next to the exe on build

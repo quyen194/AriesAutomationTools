@@ -3,6 +3,12 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
+// Xlib.h defines KeyPress/KeyRelease/ButtonPress/ButtonRelease as event-type
+// integers (e.g. #define KeyPress 2), which clash with our virtual method names.
+#undef KeyPress
+#undef KeyRelease
+#undef ButtonPress
+#undef ButtonRelease
 #include <thread>
 #include <chrono>
 #include <stdexcept>

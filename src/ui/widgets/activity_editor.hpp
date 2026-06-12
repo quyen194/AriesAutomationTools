@@ -1,5 +1,6 @@
 #pragma once
 #include "core/workflow.hpp"
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -17,7 +18,7 @@ private:
     Activity m_draft;
 
     // Multi-selection for batch ops
-    std::vector<bool> m_selection;
+    std::vector<uint8_t> m_selection;
     int m_lastScrolledStep = -1;
     int m_lastClickedIdx   = -1;
 
