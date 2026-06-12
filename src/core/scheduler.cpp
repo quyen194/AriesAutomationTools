@@ -151,6 +151,50 @@ void Scheduler::Run() {
                 } else if constexpr (std::is_same_v<T, RunWorkflowActivity>) {
                     // Chaining is handled by WorkflowEngine; Scheduler just sleeps
                     SleepInterruptible(v.delay_ms);
+
+                } else if constexpr (std::is_same_v<T, SystemActionActivity>) {
+                    const char* cmd = nullptr;
+#if defined(_WIN32)
+                    switch (v.action) {
+                        case SystemAction::Shutdown:
+                            cmd = v.force ? "shutdown /s /f /t 0" : "shutdown /s /t 0"; break;
+                        case SystemAction::Restart:
+                            cmd = v.force ? "shutdown /r /f /t 0" : "shutdown /r /t 0"; break;
+                        case SystemAction::Sleep:
+                            cmd = "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"; break;
+                        case SystemAction::Hibernate:
+                            cmd = v.force ? "shutdown /h /f" : "shutdown /h"; break;
+                        case SystemAction::Lock:
+                            cmd = "rundll32.exe user32.dll,LockWorkStation"; break;
+                        case SystemAction::LogOut:
+                            cmd = v.force ? "shutdown /l /f" : "shutdown /l"; break;
+                    }
+#elif defined(__APPLE__)
+                    switch (v.action) {
+                        case SystemAction::Shutdown:
+                            cmd = "osascript -e 'tell application \"System Events\" to shut down'"; break;
+                        case SystemAction::Restart:
+                            cmd = "osascript -e 'tell application \"System Events\" to restart'"; break;
+                        case SystemAction::Sleep:
+                        case SystemAction::Hibernate:
+                            cmd = "pmset sleepnow"; break;
+                        case SystemAction::Lock:
+                            cmd = "pmset displaysleepnow"; break;
+                        case SystemAction::LogOut:
+                            cmd = "osascript -e 'tell application \"System Events\" to log out'"; break;
+                    }
+#else
+                    switch (v.action) {
+                        case SystemAction::Shutdown:  cmd = "systemctl poweroff";    break;
+                        case SystemAction::Restart:   cmd = "systemctl reboot";      break;
+                        case SystemAction::Sleep:     cmd = "systemctl suspend";     break;
+                        case SystemAction::Hibernate: cmd = "systemctl hibernate";   break;
+                        case SystemAction::Lock:      cmd = "loginctl lock-session"; break;
+                        case SystemAction::LogOut:    cmd = "loginctl terminate-user $USER"; break;
+                    }
+#endif
+                    if (cmd) std::system(cmd);
+                    SleepInterruptible(v.delay_ms);
                 }
             }, acts[i].data);
 

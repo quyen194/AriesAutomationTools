@@ -74,18 +74,19 @@ static std::string ImGuiKeyToKeyName(ImGuiKey key) {
 // ── Activity type names ───────────────────────────────────────────────────────
 static const char* kTypes[] = {
     "mouse_move","mouse_click","mouse_drag","mouse_scroll",
-    "key_press","type_string","wait","pixel_check","run_workflow"
+    "key_press","type_string","wait","pixel_check","run_workflow","system_action"
 };
 static int TypeIndex(const ActivityData& d) {
-    if (std::holds_alternative<MouseMoveActivity>(d))   return 0;
-    if (std::holds_alternative<MouseClickActivity>(d))  return 1;
-    if (std::holds_alternative<MouseDragActivity>(d))   return 2;
-    if (std::holds_alternative<MouseScrollActivity>(d)) return 3;
-    if (std::holds_alternative<KeyPressActivity>(d))    return 4;
-    if (std::holds_alternative<TypeStringActivity>(d))  return 5;
-    if (std::holds_alternative<WaitActivity>(d))        return 6;
-    if (std::holds_alternative<PixelCheckActivity>(d))  return 7;
-    return 8;
+    if (std::holds_alternative<MouseMoveActivity>(d))    return 0;
+    if (std::holds_alternative<MouseClickActivity>(d))   return 1;
+    if (std::holds_alternative<MouseDragActivity>(d))    return 2;
+    if (std::holds_alternative<MouseScrollActivity>(d))  return 3;
+    if (std::holds_alternative<KeyPressActivity>(d))     return 4;
+    if (std::holds_alternative<TypeStringActivity>(d))   return 5;
+    if (std::holds_alternative<WaitActivity>(d))         return 6;
+    if (std::holds_alternative<PixelCheckActivity>(d))   return 7;
+    if (std::holds_alternative<RunWorkflowActivity>(d))  return 8;
+    return 9; // SystemActionActivity
 }
 static ActivityData DefaultData(int idx) {
     switch(idx) {
@@ -97,7 +98,8 @@ static ActivityData DefaultData(int idx) {
         case 5: return TypeStringActivity{};
         case 6: return WaitActivity{};
         case 7: return PixelCheckActivity{};
-        default: return RunWorkflowActivity{};
+        case 8: return RunWorkflowActivity{};
+        default: return SystemActionActivity{};
     }
 }
 
@@ -134,6 +136,13 @@ static std::string ActivitySummary(const Activity& a) {
             snprintf(buf,sizeof(buf),"pixel_check #%06X (%d,%d)",v.color_rgb,v.x,v.y);
         else if constexpr (std::is_same_v<T,RunWorkflowActivity>)
             snprintf(buf,sizeof(buf),"run_workflow %s",v.workflow_id.c_str());
+        else if constexpr (std::is_same_v<T,SystemActionActivity>) {
+            static const char* names[] = {"shutdown","restart","sleep","hibernate","lock","logout"};
+            int idx = (int)v.action;
+            snprintf(buf,sizeof(buf),"system_action %s%s",
+                (idx >= 0 && idx < 6) ? names[idx] : "?",
+                v.force ? " (force)" : "");
+        }
         return buf;
     }, a.data);
 }
@@ -940,6 +949,33 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Wait this many ms before the next activity");
+
+        } else if constexpr (std::is_same_v<T,SystemActionActivity>) {
+            static const char* actionNames[] = {
+                "Shutdown","Restart","Sleep","Hibernate","Lock","Log out"
+            };
+            int idx = (int)v.action;
+            ImGui::SetNextItemWidth(140);
+            if (ImGui::Combo("Action", &idx, actionNames, 6))
+                v.action = (SystemAction)idx;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("System-level action to perform");
+
+            bool forceApplies = (v.action == SystemAction::Shutdown  ||
+                                 v.action == SystemAction::Restart   ||
+                                 v.action == SystemAction::Hibernate ||
+                                 v.action == SystemAction::LogOut);
+            ImGui::BeginDisabled(!forceApplies);
+            ImGui::Checkbox("Force (skip save dialogs)", &v.force);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Force close applications without prompts (shutdown/restart/hibernate/logout only)");
+
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Wait this many ms after executing (useful for non-terminal actions like Lock)");
+            v.delay_ms = std::max(0, v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,RunWorkflowActivity>) {
             if (m_workflows && !m_workflows->empty()) {

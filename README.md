@@ -8,7 +8,7 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 ## Features
 
 - **Multiple workflows** — each with its own activity list, window target, trigger, and repeat settings
-- **9 activity types** — mouse move, click, drag, scroll; key press, type string, wait, pixel check, run workflow
+- **10 activity types** — mouse move, click, drag, scroll; key press, type string, wait, pixel check, run workflow, system action
 - **Window targeting** — run actions on the global screen or scoped to a specific window (by title, class, or spy-pick)
 - **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period; optional start-delay waits until the system is idle before launching
 - **Record mode** — global hook captures real mouse/keyboard actions, review and append to any workflow
@@ -93,7 +93,8 @@ Click **`+ Add`** in the Activities section to open the activity editor modal. T
 | `type_string`  | Type a string of text character by character |
 | `wait`         | Pause execution for a duration (with optional random range) |
 | `pixel_check`  | Wait until a screen pixel matches a color, or skip/stop on timeout |
-| `run_workflow` | Trigger another workflow by ID |
+| `run_workflow`   | Trigger another workflow by ID |
+| `system_action`  | Perform a system-level OS action: Shutdown, Restart, Sleep, Hibernate, Lock, or Log out. Optional **Force** flag skips save dialogs (Shutdown / Restart / Hibernate / Log out only). OS-specific: Windows uses `shutdown` / `rundll32`; Linux uses `systemctl` / `loginctl`; macOS uses `pmset` / `osascript`. |
 
 **Position mode**: `absolute` = screen coordinates. `relative` = coordinates within the target window's client area.
 
@@ -263,7 +264,7 @@ AriesAutomationTools/
     │   └── macos/macos_hotkey.cpp  # CGEventTap
     │
     ├── config/
-    │   └── config_manager.hpp/cpp  # JSON load/save (nlohmann/json), all 9 activity types
+    │   └── config_manager.hpp/cpp  # JSON load/save (nlohmann/json), all 10 activity types
     │
     └── ui/
         ├── app_ui.hpp/cpp       # Top-level layout, wires all widgets and engine

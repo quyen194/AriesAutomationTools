@@ -58,6 +58,24 @@ static uint32_t HexToColor(const std::string& s) {
     if (!hex.empty() && hex[0] == '#') hex = hex.substr(1);
     return (uint32_t)std::stoul(hex, nullptr, 16);
 }
+static std::string SystemActionToStr(SystemAction a) {
+    switch (a) {
+        case SystemAction::Restart:   return "restart";
+        case SystemAction::Sleep:     return "sleep";
+        case SystemAction::Hibernate: return "hibernate";
+        case SystemAction::Lock:      return "lock";
+        case SystemAction::LogOut:    return "logout";
+        default:                      return "shutdown";
+    }
+}
+static SystemAction StrToSystemAction(const std::string& s) {
+    if (s == "restart")   return SystemAction::Restart;
+    if (s == "sleep")     return SystemAction::Sleep;
+    if (s == "hibernate") return SystemAction::Hibernate;
+    if (s == "lock")      return SystemAction::Lock;
+    if (s == "logout")    return SystemAction::LogOut;
+    return SystemAction::Shutdown;
+}
 
 // ── Activity serialization ────────────────────────────────────────────────────
 
@@ -133,6 +151,12 @@ static json SerializeActivity(const Activity& a) {
         } else if constexpr (std::is_same_v<T, RunWorkflowActivity>) {
             j["type"]          = "run_workflow";
             j["workflow_id"]   = v.workflow_id;
+            j["delay_after_ms"]= v.delay_ms;
+
+        } else if constexpr (std::is_same_v<T, SystemActionActivity>) {
+            j["type"]          = "system_action";
+            j["action"]        = SystemActionToStr(v.action);
+            j["force"]         = v.force;
             j["delay_after_ms"]= v.delay_ms;
         }
     }, a.data);
@@ -221,6 +245,13 @@ static Activity DeserializeActivity(const json& j) {
         RunWorkflowActivity v;
         v.workflow_id = j.value("workflow_id", "");
         v.delay_ms    = j.value("delay_after_ms", 0);
+        a.data = v;
+
+    } else if (type == "system_action") {
+        SystemActionActivity v;
+        v.action   = StrToSystemAction(j.value("action", "shutdown"));
+        v.force    = j.value("force", false);
+        v.delay_ms = j.value("delay_after_ms", 0);
         a.data = v;
     } else {
         // Unknown type — store as wait(0) to avoid crashing

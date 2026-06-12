@@ -15,6 +15,15 @@ enum class PixelCheckAction {
     StopWorkflow   // stop the workflow entirely
 };
 
+enum class SystemAction {
+    Shutdown,
+    Restart,
+    Sleep,
+    Hibernate,
+    Lock,
+    LogOut
+};
+
 // ── Activity structs ──────────────────────────────────────────────────────────
 
 struct MouseMoveActivity {
@@ -80,6 +89,12 @@ struct RunWorkflowActivity {
     int delay_ms = 0;
 };
 
+struct SystemActionActivity {
+    SystemAction action   = SystemAction::Shutdown;
+    bool         force    = false;   // force-close apps (shutdown/restart/hibernate/logout)
+    int          delay_ms = 0;       // delay after (relevant for non-terminal actions like lock)
+};
+
 using ActivityData = std::variant<
     MouseMoveActivity,
     MouseClickActivity,
@@ -89,7 +104,8 @@ using ActivityData = std::variant<
     TypeStringActivity,
     WaitActivity,
     PixelCheckActivity,
-    RunWorkflowActivity
+    RunWorkflowActivity,
+    SystemActionActivity
 >;
 
 struct Activity {
