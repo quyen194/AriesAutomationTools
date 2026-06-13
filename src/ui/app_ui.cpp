@@ -198,6 +198,7 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     ApplyPauseAllHotkey(m_config.pause_all_hotkey);
     ApplyResumeAllHotkey(m_config.resume_all_hotkey);
     m_actEditor.SetWorkflows(&m_config.workflows);
+    m_actEditor.SetSDLContext(sdlWindow, SDL_GetRenderer(sdlWindow));
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
         m_engine.StartWorkflow(id);
@@ -866,6 +867,8 @@ void AppUI::RenderTriggerPickOverlay() {
     pos.x += 16.f; pos.y += 16.f;
     if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
     if (pos.y + 90  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 90;
+    if (pos.x < 0) pos.x = 0;
+    if (pos.y < 0) pos.y = 0;
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -877,32 +880,20 @@ void AppUI::RenderTriggerPickOverlay() {
     if (ImGui::Begin("##trigpickoverlay", nullptr, flags)) {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
-        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick pixel pos: %d, %d", gx, gy);
-
-#if defined(_WIN32)
-        {
-            HDC dc = GetDC(nullptr);
-            if (dc) {
-                COLORREF c = GetPixel(dc, gx, gy);
-                ReleaseDC(nullptr, dc);
-                if (c != CLR_INVALID) {
-                    float r = GetRValue(c)/255.f, g2 = GetGValue(c)/255.f, b = GetBValue(c)/255.f;
-                    ImGui::ColorButton("##trigclr", ImVec4(r, g2, b, 1.f),
-                        ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
-                        ImVec2(14, 14));
-                    ImGui::SameLine();
-                    ImGui::Text("#%02X%02X%02X", GetRValue(c), GetGValue(c), GetBValue(c));
-                }
-            }
-        }
-#endif
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick anchor pos: %d, %d", gx, gy);
+        ImGui::TextDisabled("This sets pixel_x1/y1 + captures 1x1 sample");
         ImGui::TextDisabled("Enter = confirm   Esc = cancel");
 
         if (ImGui::Button("Capture##trigpick") ||
             ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
             if (m_trigPickTarget) {
-                m_trigPickTarget->pixel_x = gx;
-                m_trigPickTarget->pixel_y = gy;
+                m_trigPickTarget->pixel_x1 = gx;
+                m_trigPickTarget->pixel_y1 = gy;
+                m_trigPickTarget->pixel_x2 = gx;
+                m_trigPickTarget->pixel_y2 = gy;
+                m_trigPickTarget->pixel_sample_w = 1;
+                m_trigPickTarget->pixel_sample_h = 1;
+                // Capture 1×1 sample via platform pixel reader
 #if defined(_WIN32)
                 {
                     HDC dc = GetDC(nullptr);
@@ -910,13 +901,16 @@ void AppUI::RenderTriggerPickOverlay() {
                         COLORREF c = GetPixel(dc, gx, gy);
                         ReleaseDC(nullptr, dc);
                         if (c != CLR_INVALID) {
-                            m_trigPickTarget->pixel_color =
+                            m_trigPickTarget->pixel_sample = {
                                 ((uint32_t)GetRValue(c) << 16) |
                                 ((uint32_t)GetGValue(c) << 8)  |
-                                 (uint32_t)GetBValue(c);
+                                 (uint32_t)GetBValue(c)
+                            };
                         }
                     }
                 }
+#else
+                m_trigPickTarget->pixel_sample = {0};
 #endif
                 m_dirty = true;
             }
@@ -1023,33 +1017,48 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         ImGui::TextDisabled("cron: %s", trig.cron_expr.c_str());
 
     } else if (trig.type == StartTrigger::Type::Pixel) {
-        ImGui::InputInt("Pixel X##tr", &trig.pixel_x);
-        ImGui::InputInt("Pixel Y##tr", &trig.pixel_y);
-        if (ImGui::Button("Pick pixel position##tr")) {
+        // Range-based pixel trigger
+        ImGui::Text("Region: (%d,%d) - (%d,%d)",
+            trig.pixel_x1, trig.pixel_y1, trig.pixel_x2, trig.pixel_y2);
+        if (ImGui::Button("Pick anchor pixel##tr")) {
             m_trigPickActive = true;
             m_trigPickTarget = &trig;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Click, then hover over the target pixel;\nposition and color are captured automatically");
+            ImGui::SetTooltip("Hover over the target pixel; position and 1x1 sample are captured");
 
-        float col[3] = {
-            ((trig.pixel_color>>16)&0xFF)/255.f,
-            ((trig.pixel_color>> 8)&0xFF)/255.f,
-            ( trig.pixel_color     &0xFF)/255.f
-        };
-        if (ImGui::ColorEdit3("Color##tr", col)) {
-            trig.pixel_color = ((uint32_t)(col[0]*255)<<16) |
-                               ((uint32_t)(col[1]*255)<< 8) |
-                                (uint32_t)(col[2]*255);
-            m_dirty = true;
+        ImGui::SetNextItemWidth(100); ImGui::InputInt("X1##tr", &trig.pixel_x1);
+        ImGui::SetNextItemWidth(100); ImGui::InputInt("Y1##tr", &trig.pixel_y1);
+        ImGui::SetNextItemWidth(100); ImGui::InputInt("X2##tr", &trig.pixel_x2);
+        ImGui::SetNextItemWidth(100); ImGui::InputInt("Y2##tr", &trig.pixel_y2);
+
+        if (trig.pixel_sample.empty()) {
+            ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none — pick an anchor)");
+        } else {
+            ImGui::Text("Sample: %d x %d (%d px)",
+                trig.pixel_sample_w, trig.pixel_sample_h, (int)trig.pixel_sample.size());
+            ImGui::SameLine();
+            if (ImGui::Button("Clear##tr")) {
+                trig.pixel_sample.clear();
+                trig.pixel_sample_w = trig.pixel_sample_h = 0;
+                m_dirty = true;
+            }
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target pixel color to match");
-        ImGui::InputInt("Tolerance##tr", &trig.pixel_tolerance);
+
+        if (ImGui::InputInt("Tolerance##tr", &trig.pixel_tolerance)) m_dirty = true;
+        trig.pixel_tolerance = std::max(0, std::min(255, trig.pixel_tolerance));
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Allowed color difference per channel (0 = exact match, 255 = any color)");
-        ImGui::InputInt("Poll interval (ms)##tr", &trig.pixel_poll_ms);
+            ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
+
+        if (ImGui::InputInt("Match percent##tr", &trig.pixel_match_percent)) m_dirty = true;
+        trig.pixel_match_percent = std::max(0, std::min(100, trig.pixel_match_percent));
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How often to check the pixel color in milliseconds");
+            ImGui::SetTooltip("Fraction of pixels that must match (0-100)");
+
+        if (ImGui::InputInt("Poll interval (ms)##tr", &trig.pixel_poll_ms)) m_dirty = true;
+        trig.pixel_poll_ms = std::max(50, trig.pixel_poll_ms);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How often to check the region in milliseconds");
     }
 }
 

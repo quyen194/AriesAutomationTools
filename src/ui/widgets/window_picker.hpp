@@ -14,6 +14,7 @@ struct WindowPickerWidget {
     void Render(IWindowFinder* finder, const WindowTarget& current);
 
 private:
-    bool m_picking = false;
+    bool m_picking  = false;
+    bool m_prevLBtn = false;   // previous-frame LButton state for falling-edge detection
     std::optional<WindowInfo> m_hover;
 };

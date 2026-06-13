@@ -20,6 +20,8 @@ struct IPixelChecker {
     // captures a w x h screen region at absolute position (x, y);
     // returns an empty buffer on failure
     virtual PixelBuffer CaptureRegion(int x, int y, int w, int h) = 0;
+    // captures the entire virtual screen; sets out_w/out_h; returns packed 0xRRGGBB row-major
+    virtual std::vector<uint32_t> CaptureFullScreen(int& out_w, int& out_h) = 0;
 };
 
 // Utility: check if two colors match within a per-channel tolerance

@@ -1,3 +1,8 @@
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#endif
 #include "window_picker.hpp"
 #include "imgui.h"
 
@@ -14,15 +19,26 @@ void WindowPickerWidget::Render(IWindowFinder* finder, const WindowTarget& curre
     if (detail.empty())
         ImGui::TextDisabled("Window: %s", typeStr);
     else
-        ImGui::TextDisabled("Window: %s — %s", typeStr, detail.c_str());
+        ImGui::TextDisabled("Window: %s - %s", typeStr, detail.c_str());
 
     ImGui::SameLine();
 
     if (!m_picking) {
-        if (ImGui::Button("🔍 Pick Window") && finder) m_picking = true;
+        if (ImGui::Button("[Pick Window]") && finder) {
+            m_picking = true;
+            m_hover   = std::nullopt;
+#if defined(_WIN32)
+            // Prime prev state so the initial press doesn't immediately fire
+            m_prevLBtn = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+#endif
+        }
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f,0.2f,0.2f,1.f));
-        if (ImGui::Button("Cancel Pick")) m_picking = false;
+        if (ImGui::Button("Cancel Pick")) {
+            // Cancel: clear hover BEFORE stopping so we never self-select
+            m_hover   = std::nullopt;
+            m_picking = false;
+        }
         ImGui::PopStyleColor();
 
         if (finder) {
@@ -36,16 +52,37 @@ void WindowPickerWidget::Render(IWindowFinder* finder, const WindowTarget& curre
                     m_hover->rect.x, m_hover->rect.y,
                     m_hover->rect.w, m_hover->rect.h);
                 ImGui::EndTooltip();
-
-                // Confirm on left-click outside our own window
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-                    !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
-                    if (OnPicked) OnPicked(*m_hover);
-                    m_picking = false;
-                }
             }
+
+#if defined(_WIN32)
+            // Falling-edge detection on LButton: fired when released after being pressed.
+            // This avoids the initial press (that opened pick mode) from instantly confirming.
+            bool curLBtn = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            bool clickedNow = m_prevLBtn && !curLBtn;  // pressed last frame, released this frame
+            m_prevLBtn = curLBtn;
+
+            if (clickedNow && m_hover.has_value()) {
+                if (OnPicked) OnPicked(*m_hover);
+                m_hover   = std::nullopt;
+                m_picking = false;
+            }
+#else
+            // Fallback: ImGui mouse click (only works within our window)
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                if (m_hover.has_value()) {
+                    if (OnPicked) OnPicked(*m_hover);
+                }
+                m_hover   = std::nullopt;
+                m_picking = false;
+            }
+#endif
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_picking = false;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            // Cancel: clear hover first to prevent self-select
+            m_hover   = std::nullopt;
+            m_picking = false;
+        }
     }
 }

@@ -12,6 +12,7 @@
 #include <sstream>
 #include <random>
 #include <iomanip>
+#include <cmath>
 
 // ── UUID helper ───────────────────────────────────────────────────────────────
 static std::string GenId() {
@@ -72,71 +73,162 @@ static std::string ImGuiKeyToKeyName(ImGuiKey key) {
     }
 }
 
-// ── Activity type names ───────────────────────────────────────────────────────
+// ── Activity type metadata ────────────────────────────────────────────────────
+// kTypes is used for the Combo in the modal.
+// Index 7 (pixel_check) is excluded; indices 8-15 are added.
 static const char* kTypes[] = {
     "mouse_move","mouse_click","mouse_drag","mouse_scroll",
-    "key_press","type_string","wait","pixel_check","pixel_range_check",
-    "run_workflow","system_action"
+    "key_press","type_string","wait",
+    // 7 = pixel_check (hidden — not in this list)
+    "pixel_range_check",     // displayed index 7 → variant index 8
+    "run_workflow","system_action",
+    "run_activity","set_variable","loop","if","switch"
 };
-static int TypeIndex(const ActivityData& d) {
-    if (std::holds_alternative<MouseMoveActivity>(d))       return 0;
-    if (std::holds_alternative<MouseClickActivity>(d))      return 1;
-    if (std::holds_alternative<MouseDragActivity>(d))       return 2;
-    if (std::holds_alternative<MouseScrollActivity>(d))     return 3;
-    if (std::holds_alternative<KeyPressActivity>(d))        return 4;
-    if (std::holds_alternative<TypeStringActivity>(d))      return 5;
-    if (std::holds_alternative<WaitActivity>(d))            return 6;
-    if (std::holds_alternative<PixelCheckActivity>(d))      return 7;
-    if (std::holds_alternative<PixelRangeCheckActivity>(d)) return 8;
-    if (std::holds_alternative<RunWorkflowActivity>(d))     return 9;
-    return 10; // SystemActionActivity
+// Map displayed combo index → variant index
+static const int kTypeToVariantIdx[] = {
+    0,1,2,3,4,5,6, 8, 9,10, 11,12,13,14,15
+};
+static const int kNumTypes = (int)(sizeof(kTypes)/sizeof(kTypes[0]));
+
+// Map variant index → display combo index (-1 if hidden)
+static int VariantToDisplayIdx(const ActivityData& d) {
+    if (std::holds_alternative<MouseMoveActivity>(d))        return 0;
+    if (std::holds_alternative<MouseClickActivity>(d))       return 1;
+    if (std::holds_alternative<MouseDragActivity>(d))        return 2;
+    if (std::holds_alternative<MouseScrollActivity>(d))      return 3;
+    if (std::holds_alternative<KeyPressActivity>(d))         return 4;
+    if (std::holds_alternative<TypeStringActivity>(d))       return 5;
+    if (std::holds_alternative<WaitActivity>(d))             return 6;
+    if (std::holds_alternative<PixelCheckActivity>(d))       return -1; // hidden
+    if (std::holds_alternative<PixelRangeCheckActivity>(d))  return 7;
+    if (std::holds_alternative<RunWorkflowActivity>(d))      return 8;
+    if (std::holds_alternative<SystemActionActivity>(d))     return 9;
+    if (std::holds_alternative<RunActivityActivity>(d))      return 10;
+    if (std::holds_alternative<SetVariableActivity>(d))      return 11;
+    if (std::holds_alternative<LoopActivity>(d))             return 12;
+    if (std::holds_alternative<IfActivity>(d))               return 13;
+    if (std::holds_alternative<SwitchActivity>(d))           return 14;
+    return -1;
 }
-static ActivityData DefaultData(int idx) {
-    switch(idx) {
-        case 0: return MouseMoveActivity{};
-        case 1: return MouseClickActivity{};
-        case 2: return MouseDragActivity{};
-        case 3: return MouseScrollActivity{};
-        case 4: return KeyPressActivity{};
-        case 5: return TypeStringActivity{};
-        case 6: return WaitActivity{};
-        case 7: return PixelCheckActivity{};
-        case 8: return PixelRangeCheckActivity{};
-        case 9: return RunWorkflowActivity{};
-        default: return SystemActionActivity{};
+
+static ActivityData DefaultData(int displayIdx) {
+    int vi = kTypeToVariantIdx[displayIdx];
+    switch (vi) {
+        case 0:  return MouseMoveActivity{};
+        case 1:  return MouseClickActivity{};
+        case 2:  return MouseDragActivity{};
+        case 3:  return MouseScrollActivity{};
+        case 4:  return KeyPressActivity{};
+        case 5:  return TypeStringActivity{};
+        case 6:  return WaitActivity{};
+        case 8: { PixelRangeCheckActivity v;
+                  v.match_body    = std::make_shared<std::vector<Activity>>();
+                  v.no_match_body = std::make_shared<std::vector<Activity>>();
+                  return v; }
+        case 9:  return RunWorkflowActivity{};
+        case 10: return SystemActionActivity{};
+        case 11: return RunActivityActivity{};
+        case 12: return SetVariableActivity{};
+        case 13: { LoopActivity v; v.body = std::make_shared<std::vector<Activity>>(); return v; }
+        case 14: { IfActivity v;
+                   v.then_body = std::make_shared<std::vector<Activity>>();
+                   v.else_body = std::make_shared<std::vector<Activity>>();
+                   return v; }
+        case 15: { SwitchActivity v;
+                   v.default_body = std::make_shared<std::vector<Activity>>();
+                   return v; }
+        default: return WaitActivity{};
     }
 }
 
-// Shared pixel checker for edit-time sample capture / color preview
+// Shared pixel checker
 static IPixelChecker* EditorPixelChecker() {
     static std::unique_ptr<IPixelChecker> s_checker = CreatePixelChecker();
     return s_checker.get();
 }
 
-// Capture the reference image for a pixel-range check from the current screen.
-// Coordinates are treated as absolute screen positions at capture time.
-static bool CaptureRangeSample(PixelRangeCheckActivity& v) {
-    int left = std::min(v.x1, v.x2);
-    int top  = std::min(v.y1, v.y2);
-    int w    = std::abs(v.x2 - v.x1) + 1;
-    int h    = std::abs(v.y2 - v.y1) + 1;
-    PixelBuffer buf = EditorPixelChecker()->CaptureRegion(left, top, w, h);
-    if (buf.Empty()) return false;
-    v.sample_w = buf.width;
-    v.sample_h = buf.height;
-    v.sample   = std::move(buf.pixels);
-    return true;
+static const char* BtnNames[]     = {"left","right","middle"};
+static const char* PosModeNames[] = {"absolute","relative"};
+static const char* VarOpNames[]   = {"set","increment","decrement","random"};
+static const char* CondOpNames[]  = {"eq","neq","gt","lt","gteq","lteq","contains"};
+
+// ── Block-type helpers ────────────────────────────────────────────────────────
+
+bool ActivityEditorWidget::IsBlockType(const ActivityData& d) {
+    return std::holds_alternative<LoopActivity>(d)             ||
+           std::holds_alternative<IfActivity>(d)               ||
+           std::holds_alternative<SwitchActivity>(d)           ||
+           std::holds_alternative<PixelRangeCheckActivity>(d);
 }
 
-static const char* BtnNames[]         = {"left","right","middle"};
-static const char* PosModeNames[]     = {"absolute","relative"};
-static const char* PixelActionNames[] = {"retry","skip_iteration","stop_workflow"};
+// Returns ImGui color (packed ABGR) for graph column lines
+uint32_t ActivityEditorWidget::BlockColor(const ActivityData& d) {
+    if (std::holds_alternative<LoopActivity>(d))            return IM_COL32(0x4a, 0x9e, 0xff, 0xff);
+    if (std::holds_alternative<IfActivity>(d))              return IM_COL32(0x4a, 0xff, 0x7a, 0xff);
+    if (std::holds_alternative<SwitchActivity>(d))          return IM_COL32(0xff, 0xaa, 0x4a, 0xff);
+    if (std::holds_alternative<PixelRangeCheckActivity>(d)) return IM_COL32(0xff, 0x55, 0xaa, 0xff);
+    return IM_COL32(0x55, 0x55, 0x55, 0xff);
+}
+
+std::string ActivityEditorWidget::BlockName(const Activity& a) {
+    return std::visit([](auto&& v) -> std::string {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T,LoopActivity>            ||
+                      std::is_same_v<T,IfActivity>              ||
+                      std::is_same_v<T,SwitchActivity>          ||
+                      std::is_same_v<T,PixelRangeCheckActivity>)
+            return v.name;
+        return {};
+    }, a.data);
+}
+
+// Auto-assigns a block name if empty (e.g. "Loop 2")
+static void AutoNameBlock(Activity& a, const std::vector<Activity>& allActs,
+                          const std::string& prefix, int variantIdx) {
+    // count existing blocks of the same type
+    int n = 0;
+    std::function<void(const std::vector<Activity>&)> count;
+    count = [&](const std::vector<Activity>& acts) {
+        for (auto& act : acts) {
+            if ((int)act.data.index() == variantIdx) ++n;
+            std::visit([&](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T,LoopActivity>)
+                    if (v.body) count(*v.body);
+                if constexpr (std::is_same_v<T,IfActivity>) {
+                    if (v.then_body) count(*v.then_body);
+                    if (v.else_body) count(*v.else_body);
+                }
+                if constexpr (std::is_same_v<T,SwitchActivity>) {
+                    for (auto& sc : v.cases) if (sc.body) count(*sc.body);
+                    if (v.default_body) count(*v.default_body);
+                }
+                if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
+                    if (v.match_body)    count(*v.match_body);
+                    if (v.no_match_body) count(*v.no_match_body);
+                }
+            }, act.data);
+        }
+    };
+    count(allActs);
+
+    // Set name on the new activity
+    std::string newName = prefix + " " + std::to_string(n + 1);
+    std::visit([&](auto&& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T,LoopActivity>            ||
+                      std::is_same_v<T,IfActivity>              ||
+                      std::is_same_v<T,SwitchActivity>          ||
+                      std::is_same_v<T,PixelRangeCheckActivity>)
+            if (v.name.empty()) v.name = newName;
+    }, a.data);
+}
 
 // ── Short summary for list row ────────────────────────────────────────────────
 static std::string ActivitySummary(const Activity& a) {
-    return std::visit([](auto&& v) -> std::string {
+    return std::visit([&a](auto&& v) -> std::string {
         using T = std::decay_t<decltype(v)>;
-        char buf[128]{};
+        char buf[160]{};
         if constexpr (std::is_same_v<T,MouseMoveActivity>)
             snprintf(buf,sizeof(buf),"mouse_move %s (%d,%d) +%dms",
                 v.pos_mode==PositionMode::Absolute?"abs":"rel",v.x,v.y,v.delay_ms);
@@ -159,88 +251,245 @@ static std::string ActivitySummary(const Activity& a) {
             snprintf(buf,sizeof(buf),"wait %dms +/-%dms",v.duration_ms,v.random_range_ms);
         else if constexpr (std::is_same_v<T,PixelCheckActivity>)
             snprintf(buf,sizeof(buf),"pixel_check #%06X (%d,%d)",v.color_rgb,v.x,v.y);
-        else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>)
-            snprintf(buf,sizeof(buf),"pixel_range (%d,%d)-(%d,%d) %s %d%%",
+        else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
+            int nBody = (v.match_body ? (int)v.match_body->size() : 0)
+                      + (v.no_match_body ? (int)v.no_match_body->size() : 0);
+            snprintf(buf,sizeof(buf),"%s  (%d,%d)-(%d,%d) %s %d%% [%d]",
+                v.name.empty() ? "pixel_range" : v.name.c_str(),
                 v.x1,v.y1,v.x2,v.y2,
-                v.sample.empty()?"no sample":"sampled",v.match_percent);
-        else if constexpr (std::is_same_v<T,RunWorkflowActivity>)
+                v.sample.empty()?"no sample":"sampled",v.match_percent,nBody);
+        } else if constexpr (std::is_same_v<T,RunWorkflowActivity>)
             snprintf(buf,sizeof(buf),"run_workflow %s",v.workflow_id.c_str());
         else if constexpr (std::is_same_v<T,SystemActionActivity>) {
             static const char* names[] = {"shutdown","restart","sleep","hibernate","lock","logout"};
             int idx = (int)v.action;
             snprintf(buf,sizeof(buf),"system_action %s%s",
-                (idx >= 0 && idx < 6) ? names[idx] : "?",
-                v.force ? " (force)" : "");
+                (idx>=0&&idx<6)?names[idx]:"?",v.force?" (force)":"");
+        } else if constexpr (std::is_same_v<T,RunActivityActivity>)
+            snprintf(buf,sizeof(buf),"run_activity -> %.24s",v.activity_id.c_str());
+        else if constexpr (std::is_same_v<T,SetVariableActivity>)
+            snprintf(buf,sizeof(buf),"set %s %s %s",
+                v.name.c_str(),
+                v.op==VarOp::Set?"=":v.op==VarOp::Increment?"+=":
+                v.op==VarOp::Decrement?"-=":"rand",
+                v.value.c_str());
+        else if constexpr (std::is_same_v<T,LoopActivity>) {
+            int n = v.body ? (int)v.body->size() : 0;
+            snprintf(buf,sizeof(buf),"%s  x%d  [%d steps]",
+                v.name.empty()?"loop":v.name.c_str(), v.count, n);
+        } else if constexpr (std::is_same_v<T,IfActivity>) {
+            snprintf(buf,sizeof(buf),"%s  if %s %s %s",
+                v.name.empty()?"if":v.name.c_str(),
+                v.cond.lhs.c_str(),
+                v.cond.op==ConditionOp::Eq?"==":v.cond.op==ConditionOp::NEq?"!=":
+                v.cond.op==ConditionOp::Gt?">":v.cond.op==ConditionOp::Lt?"<":
+                v.cond.op==ConditionOp::GtEq?">=":v.cond.op==ConditionOp::LtEq?"<=":"contains",
+                v.cond.rhs.c_str());
+        } else if constexpr (std::is_same_v<T,SwitchActivity>) {
+            snprintf(buf,sizeof(buf),"%s  switch %s  [%d cases]",
+                v.name.empty()?"switch":v.name.c_str(),
+                v.var_name.c_str(),(int)v.cases.size());
         }
         return buf;
     }, a.data);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── SDL fullscreen overlay helpers ────────────────────────────────────────────
+
+void ActivityEditorWidget::EnterFullscreenMode() {
+    if (!m_sdlWindow || m_origWindowW > 0) return; // already fullscreen or no window
+    SDL_GetWindowPosition(m_sdlWindow, &m_origWindowX, &m_origWindowY);
+    SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
+    SDL_DisplayMode dm{};
+    if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
+        SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
+        SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
+        SDL_SetWindowPosition(m_sdlWindow, 0, 0);
+        SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
+    }
+}
+
+void ActivityEditorWidget::ExitFullscreenMode() {
+    if (!m_sdlWindow || m_origWindowW <= 0) return;
+    SDL_SetWindowBordered(m_sdlWindow, SDL_TRUE);
+    SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_FALSE);
+    SDL_SetWindowPosition(m_sdlWindow, m_origWindowX, m_origWindowY);
+    SDL_SetWindowSize(m_sdlWindow, m_origWindowW, m_origWindowH);
+    m_origWindowW = 0;
+}
+
+// ── FlatNode pre-pass ─────────────────────────────────────────────────────────
+
+void ActivityEditorWidget::CollectFlatNodes(std::vector<Activity>& list,
+                                            int depth,
+                                            std::vector<bool> ancestorCont) {
+    for (int i = 0; i < (int)list.size(); ++i) {
+        auto& a = list[i];
+        bool hasMoreSiblings = (i < (int)list.size() - 1);
+        bool isBlock = IsBlockType(a.data);
+        bool isExpanded = isBlock && m_expandedIds.count(a.id);
+
+        FlatNode node;
+        node.act           = &a;
+        node.parentList    = &list;
+        node.indexInParent = i;
+        node.depth         = depth;
+        node.kind          = isBlock ? FlatNode::Kind::BlockHeader : FlatNode::Kind::Normal;
+        node.isExpanded    = isExpanded;
+        node.ancestorContinues = ancestorCont;
+        node.blockId       = a.id;
+        node.blockName     = BlockName(a);
+        m_flatNodes.push_back(node);
+
+        if (isBlock && isExpanded) {
+            std::vector<bool> childCont = ancestorCont;
+            childCont.push_back(hasMoreSiblings);
+
+            // Visit children according to block type
+            std::visit([&](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T,LoopActivity>) {
+                    if (v.body)
+                        CollectFlatNodes(*v.body, depth + 1, childCont);
+                } else if constexpr (std::is_same_v<T,IfActivity>) {
+                    if (v.then_body && !v.then_body->empty())
+                        CollectFlatNodes(*v.then_body, depth + 1, childCont);
+                    if (v.else_body && !v.else_body->empty())
+                        CollectFlatNodes(*v.else_body, depth + 1, childCont);
+                } else if constexpr (std::is_same_v<T,SwitchActivity>) {
+                    for (auto& sc : v.cases)
+                        if (sc.body && !sc.body->empty())
+                            CollectFlatNodes(*sc.body, depth + 1, childCont);
+                    if (v.default_body && !v.default_body->empty())
+                        CollectFlatNodes(*v.default_body, depth + 1, childCont);
+                } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
+                    if (v.match_body && !v.match_body->empty())
+                        CollectFlatNodes(*v.match_body, depth + 1, childCont);
+                    if (v.no_match_body && !v.no_match_body->empty())
+                        CollectFlatNodes(*v.no_match_body, depth + 1, childCont);
+                }
+            }, a.data);
+
+            // BlockEnd virtual row — at the same depth as the header
+            FlatNode endNode;
+            endNode.act           = nullptr;
+            endNode.parentList    = &list;
+            endNode.indexInParent = i;
+            endNode.depth         = depth;
+            endNode.kind          = FlatNode::Kind::BlockEnd;
+            endNode.isExpanded    = false;
+            endNode.ancestorContinues = ancestorCont;
+            endNode.blockId       = a.id;
+            endNode.blockName     = node.blockName;
+            m_flatNodes.push_back(endNode);
+        }
+    }
+}
+
+void ActivityEditorWidget::RebuildFlatNodes(Workflow& wf) {
+    m_flatNodes.clear();
+    CollectFlatNodes(wf.activities, 0, {});
+}
+
+// ── Main Render ───────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
-    m_selection.resize(wf.activities.size(), false);
     ImGuiIO& io = ImGui::GetIO();
+
+    // Handle snipping tool state machine
+    if (m_snipStage == SnipStage::WaitFrame) {
+        // Take screenshot now that the window is fullscreen
+        IPixelChecker* checker = EditorPixelChecker();
+        if (checker) {
+            m_snipPixels = checker->CaptureFullScreen(m_snipW, m_snipH);
+        }
+        if (!m_snipPixels.empty() && m_sdlRenderer && m_snipW > 0 && m_snipH > 0) {
+            if (m_snipTexture) { SDL_DestroyTexture(m_snipTexture); m_snipTexture = nullptr; }
+            SDL_Texture* tex = SDL_CreateTexture(m_sdlRenderer,
+                SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, m_snipW, m_snipH);
+            if (tex) {
+                std::vector<uint32_t> argb(m_snipW * m_snipH);
+                for (int px = 0; px < m_snipW * m_snipH; ++px)
+                    argb[px] = 0xFF000000u | m_snipPixels[px];
+                SDL_UpdateTexture(tex, nullptr, argb.data(), m_snipW * 4);
+                m_snipTexture = tex;
+            }
+        }
+        m_snipStage   = SnipStage::Active;
+        m_snipDragging = false;
+        m_snipX1 = m_snipY1 = m_snipX2 = m_snipY2 = 0;
+    }
+
+    if (m_snipStage == SnipStage::Active) {
+        RenderSnipOverlay(wf);
+        return; // Don't render normal UI while snipping
+    }
+
+    if (m_snipStage == SnipStage::Done) {
+        if (m_snipTexture) { SDL_DestroyTexture(m_snipTexture); m_snipTexture = nullptr; }
+        m_snipPixels.clear();
+        m_snipStage = SnipStage::None;
+        ExitFullscreenMode();
+        m_openModal = true;
+    }
+
+    // Rebuild FlatNode list
+    RebuildFlatNodes(wf);
 
     // ── Header: count + Add button ────────────────────────────────────────────
     ImGui::Text("Activities (%d)", (int)wf.activities.size());
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sequence of actions executed in order");
     ImGui::SameLine();
     if (ImGui::Button("+ Add##act")) {
-        m_draft            = Activity{GenId(), true, MouseClickActivity{}};
+        Activity a{GenId(), true, MouseClickActivity{}};
+        m_draft            = a;
         m_editIdx          = -1;
         m_openModal        = true;
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
         m_pickStage        = PickStage::None;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a new activity");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a new activity to the workflow root");
 
     // ── Batch ops bar ─────────────────────────────────────────────────────────
     {
-        int total    = (int)wf.activities.size();
-        int selCount = 0;
-        int firstSel = -1, lastSel = -1;
-        for (int j = 0; j < (int)m_selection.size(); ++j) {
-            if (m_selection[j]) {
-                if (firstSel < 0) firstSel = j;
-                lastSel = j;
-                ++selCount;
-            }
-        }
+        int selCount = (int)m_selectedIds.size();
 
         if (ImGui::SmallButton("All##sa")) {
-            std::fill(m_selection.begin(), m_selection.end(), true);
-            m_lastClickedIdx = -1;
+            m_selectedIds.clear();
+            for (auto& fn : m_flatNodes)
+                if (fn.act && fn.kind != FlatNode::Kind::BlockEnd)
+                    m_selectedIds.insert(fn.act->id);
+            m_lastClickedId.clear();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select all");
         ImGui::SameLine();
         if (ImGui::SmallButton("None##sa")) {
-            std::fill(m_selection.begin(), m_selection.end(), false);
-            m_lastClickedIdx = -1;
+            m_selectedIds.clear(); m_lastClickedId.clear();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deselect all");
 
         if (selCount > 0) {
-            // Move up/down (single selection only)
-            if (selCount == 1 && firstSel >= 0) {
+            // Find first selected node for move operations
+            FlatNode* firstSel = nullptr;
+            for (auto& fn : m_flatNodes)
+                if (fn.act && m_selectedIds.count(fn.act->id)) { firstSel = &fn; break; }
+
+            if (selCount == 1 && firstSel) {
+                auto* pl = firstSel->parentList;
+                int idx  = firstSel->indexInParent;
                 ImGui::SameLine();
-                ImGui::BeginDisabled(firstSel == 0);
+                ImGui::BeginDisabled(idx == 0);
                 if (ImGui::SmallButton("^##bmv")) {
-                    std::swap(wf.activities[firstSel], wf.activities[firstSel - 1]);
-                    std::swap(m_selection[firstSel], m_selection[firstSel - 1]);
-                    m_lastClickedIdx = firstSel - 1;
+                    std::swap((*pl)[idx], (*pl)[idx-1]);
                     if (OnChanged) OnChanged();
                 }
                 ImGui::EndDisabled();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move up");
-
                 ImGui::SameLine();
-                ImGui::BeginDisabled(firstSel >= total - 1);
+                ImGui::BeginDisabled(idx >= (int)pl->size()-1);
                 if (ImGui::SmallButton("v##bmv")) {
-                    std::swap(wf.activities[firstSel], wf.activities[firstSel + 1]);
-                    std::swap(m_selection[firstSel], m_selection[firstSel + 1]);
-                    m_lastClickedIdx = firstSel + 1;
+                    std::swap((*pl)[idx], (*pl)[idx+1]);
                     if (OnChanged) OnChanged();
                 }
                 ImGui::EndDisabled();
@@ -249,86 +498,154 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
             ImGui::SameLine();
             if (ImGui::SmallButton("Dup##bsel")) {
-                // Collect copies in order, then insert after the last selected index
-                std::vector<Activity> dups;
+                // Duplicate selected root-level activities
+                std::vector<int> selIdxs;
                 for (int i = 0; i < (int)wf.activities.size(); ++i)
-                    if (i < (int)m_selection.size() && m_selection[i]) {
-                        Activity copy = wf.activities[i];
+                    if (m_selectedIds.count(wf.activities[i].id))
+                        selIdxs.push_back(i);
+                if (!selIdxs.empty()) {
+                    int insertAt = selIdxs.back() + 1;
+                    for (int i = (int)selIdxs.size()-1; i >= 0; --i) {
+                        Activity copy = wf.activities[selIdxs[i]];
                         copy.id = GenId();
-                        dups.push_back(std::move(copy));
+                        wf.activities.insert(wf.activities.begin() + insertAt, std::move(copy));
                     }
-                if (!dups.empty()) {
-                    int insertAt = lastSel + 1;
-                    wf.activities.insert(wf.activities.begin() + insertAt,
-                                         dups.begin(), dups.end());
-                    m_selection.clear();
-                    m_selection.resize(wf.activities.size(), false);
-                    for (int i = insertAt; i < insertAt + (int)dups.size(); ++i)
-                        m_selection[i] = true;
-                    m_lastClickedIdx = insertAt + (int)dups.size() - 1;
                     if (OnChanged) OnChanged();
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate selected activities");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate selected");
+
             ImGui::SameLine();
             if (ImGui::SmallButton("Del##bsel")) {
+                m_confirmDeleteId    = "";
                 m_confirmDeleteBatch = true;
-                m_confirmDeleteIdx   = -1;
                 m_pendingConfirmOpen = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete selected activities");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete selected");
+
             ImGui::SameLine();
             if (ImGui::SmallButton("On##bsel")) {
-                for (int i = 0; i < (int)wf.activities.size(); ++i)
-                    if (i < (int)m_selection.size() && m_selection[i])
-                        wf.activities[i].enabled = true;
+                for (auto& fn : m_flatNodes)
+                    if (fn.act && m_selectedIds.count(fn.act->id))
+                        fn.act->enabled = true;
                 if (OnChanged) OnChanged();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable selected activities");
             ImGui::SameLine();
             if (ImGui::SmallButton("Off##bsel")) {
-                for (int i = 0; i < (int)wf.activities.size(); ++i)
-                    if (i < (int)m_selection.size() && m_selection[i])
-                        wf.activities[i].enabled = false;
+                for (auto& fn : m_flatNodes)
+                    if (fn.act && m_selectedIds.count(fn.act->id))
+                        fn.act->enabled = false;
                 if (OnChanged) OnChanged();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Disable selected activities");
             ImGui::SameLine();
             ImGui::TextDisabled("(%d sel)", selCount);
         }
     }
 
-    // Deferred per-item operations from context menu
-    int ctxEnableIdx    = -1;
-    int ctxDisableIdx   = -1;
-    int ctxMoveUp       = -1;
-    int ctxMoveDown     = -1;
-    int ctxDuplicateIdx = -1;
-
     ImGui::BeginChild("##actlist", ImVec2(0, -60), true);
 
-    for (int i = 0; i < (int)wf.activities.size(); ++i) {
-        auto& a = wf.activities[i];
-        ImGui::PushID(i);
+    const float kGraphColW = 12.f; // pixels per depth level in graph column
+    const float kToggleW   = 16.f; // width for expand/collapse button
 
-        bool isSelected = (i < (int)m_selection.size()) && m_selection[i];
-        bool isCurrent  = (currentStep == i);
+    auto* dl = ImGui::GetWindowDrawList();
 
-        if (isCurrent && currentStep != m_lastScrolledStep) {
+    int visibleIdx = 0; // selectable row index (BlockEnd skipped)
+    for (int ni = 0; ni < (int)m_flatNodes.size(); ++ni) {
+        auto& fn = m_flatNodes[ni];
+        ImGui::PushID(ni);
+
+        float indentPx = fn.depth * kGraphColW;
+
+        // ── Draw graph column lines ───────────────────────────────────────────
+        ImVec2 rowMin = ImGui::GetCursorScreenPos();
+        float rowH    = ImGui::GetTextLineHeightWithSpacing();
+        float rowMidY = rowMin.y + rowH * 0.5f;
+
+        uint32_t graphCol = IM_COL32(0x55,0x55,0x55,0xff);
+        if (fn.act) graphCol = BlockColor(fn.act->data);
+
+        // Ancestor vertical lines
+        for (int d = 0; d < fn.depth; ++d) {
+            float lx = rowMin.x + d * kGraphColW + kGraphColW * 0.5f;
+            bool cont = (d < (int)fn.ancestorContinues.size()) && fn.ancestorContinues[d];
+            uint32_t lc = IM_COL32(0x55,0x55,0x55,0x88);
+            if (cont)
+                dl->AddLine(ImVec2(lx, rowMin.y), ImVec2(lx, rowMin.y + rowH), lc, 1.5f);
+            else if (d == fn.depth - 1)
+                dl->AddLine(ImVec2(lx, rowMin.y), ImVec2(lx, rowMidY), lc, 1.5f);
+        }
+        // Horizontal connector at own depth
+        if (fn.depth > 0) {
+            float hx0 = rowMin.x + (fn.depth-1) * kGraphColW + kGraphColW * 0.5f;
+            float hx1 = rowMin.x + fn.depth * kGraphColW;
+            dl->AddLine(ImVec2(hx0, rowMidY), ImVec2(hx1, rowMidY),
+                        IM_COL32(0x55,0x55,0x55,0x88), 1.5f);
+        }
+        // Block header: draw downward half-bar below mid → connects to first child
+        if (fn.kind == FlatNode::Kind::BlockHeader && fn.isExpanded) {
+            float bx = rowMin.x + fn.depth * kGraphColW + kGraphColW * 0.5f;
+            dl->AddLine(ImVec2(bx, rowMidY), ImVec2(bx, rowMin.y + rowH),
+                        graphCol, 2.0f);
+        }
+        // BlockEnd: draw upward half-bar above mid → closes the block
+        if (fn.kind == FlatNode::Kind::BlockEnd) {
+            float bx = rowMin.x + fn.depth * kGraphColW + kGraphColW * 0.5f;
+            dl->AddLine(ImVec2(bx, rowMin.y), ImVec2(bx, rowMidY),
+                        graphCol, 2.0f);
+        }
+
+        // Indent content
+        ImGui::Dummy(ImVec2(indentPx, 0));
+        ImGui::SameLine(0, 0);
+
+        // ── BlockEnd row ──────────────────────────────────────────────────────
+        if (fn.kind == FlatNode::Kind::BlockEnd) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f,0.55f,0.55f,1.f));
+            std::string label = "-- end " + (fn.blockName.empty() ? fn.blockId.substr(0,8) : fn.blockName) + " --";
+            ImGui::TextUnformatted(label.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemClicked()) {
+                m_expandedIds.erase(fn.blockId);
+            }
+            ImGui::PopID();
+            continue;
+        }
+
+        // ── Normal / BlockHeader rows ─────────────────────────────────────────
+        auto& a = *fn.act;
+        bool isCurrent  = (currentStep >= 0 && fn.parentList == &wf.activities &&
+                           fn.indexInParent == currentStep);
+        bool isSelected = m_selectedIds.count(a.id) > 0;
+
+        if (isCurrent && fn.indexInParent != m_lastScrolledStep) {
             ImGui::SetScrollHereY(0.5f);
-            m_lastScrolledStep = currentStep;
+            m_lastScrolledStep = fn.indexInParent;
         }
 
-        if (isCurrent) {
-            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f));
+        if (isCurrent)
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f)),
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f)),
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.1f,0.65f,0.1f,0.90f));
-        }
         if (!a.enabled && !isCurrent)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1.f));
 
+        // Expand/collapse toggle for block types
+        if (fn.kind == FlatNode::Kind::BlockHeader) {
+            const char* toggleLbl = fn.isExpanded ? "v##t" : ">##t";
+            if (ImGui::SmallButton(toggleLbl)) {
+                if (fn.isExpanded) m_expandedIds.erase(a.id);
+                else               m_expandedIds.insert(a.id);
+            }
+            ImGui::SameLine(0, 2);
+        } else {
+            // Spacer to align with block headers
+            ImGui::Dummy(ImVec2(kToggleW, 0));
+            ImGui::SameLine(0, 2);
+        }
+
         char label[256];
-        snprintf(label, sizeof(label), "%2d. %s", i+1, ActivitySummary(a).c_str());
+        snprintf(label, sizeof(label), "%2d. %s##sel%d",
+                 visibleIdx+1, ActivitySummary(a).c_str(), ni);
 
         bool highlighted = isSelected || isCurrent;
         ImGuiSelectableFlags selFlags =
@@ -336,52 +653,64 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         if (ImGui::Selectable(label, highlighted, selFlags)) {
             if (ImGui::IsMouseDoubleClicked(0)) {
                 m_draft            = a;
-                m_editIdx          = i;
+                m_editIdx          = fn.indexInParent;
+                // Store reference to the parent list via a tag — we use indexInParent + parentList
                 m_openModal        = true;
                 m_keyCaptureActive = false;
                 m_scrollCapture    = false;
                 m_pickStage        = PickStage::None;
             } else {
-                if (io.KeyShift && m_lastClickedIdx >= 0) {
-                    std::fill(m_selection.begin(), m_selection.end(), false);
-                    int lo = std::min(i, m_lastClickedIdx);
-                    int hi = std::max(i, m_lastClickedIdx);
-                    for (int j = lo; j <= hi && j < (int)m_selection.size(); ++j)
-                        m_selection[j] = true;
+                if (io.KeyShift && !m_lastClickedId.empty()) {
+                    // Range select within visible nodes
+                    bool inRange = false;
+                    for (auto& fn2 : m_flatNodes) {
+                        if (fn2.kind == FlatNode::Kind::BlockEnd || !fn2.act) continue;
+                        if (fn2.act->id == m_lastClickedId || fn2.act->id == a.id)
+                            inRange = !inRange, m_selectedIds.insert(fn2.act->id);
+                        else if (inRange)
+                            m_selectedIds.insert(fn2.act->id);
+                    }
+                    m_selectedIds.insert(a.id);
                 } else if (io.KeyCtrl) {
-                    if (i < (int)m_selection.size()) m_selection[i] = !m_selection[i];
-                    m_lastClickedIdx = i;
+                    if (m_selectedIds.count(a.id)) m_selectedIds.erase(a.id);
+                    else m_selectedIds.insert(a.id);
+                    m_lastClickedId = a.id;
                 } else {
-                    std::fill(m_selection.begin(), m_selection.end(), false);
-                    if (i < (int)m_selection.size()) m_selection[i] = true;
-                    m_lastClickedIdx = i;
+                    m_selectedIds.clear();
+                    m_selectedIds.insert(a.id);
+                    m_lastClickedId = a.id;
                 }
             }
         }
+
         if (!a.enabled && !isCurrent) ImGui::PopStyleColor();
         if (isCurrent)               ImGui::PopStyleColor(3);
 
         // Drag-drop source
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            ImGui::SetDragDropPayload("ACT_IDX", &i, sizeof(int));
+            // Payload: pointer to parentList and index
+            struct ActDragPayload { std::vector<Activity>* srcList; int srcIdx; };
+            ActDragPayload payload{fn.parentList, fn.indexInParent};
+            ImGui::SetDragDropPayload("ACT_TREE", &payload, sizeof(payload));
             auto s = ActivitySummary(a);
             if (s.size() > 28) s = s.substr(0, 28) + "..";
-            ImGui::Text("Move %d. %s", i+1, s.c_str());
+            ImGui::Text("Move: %s", s.c_str());
             ImGui::EndDragDropSource();
         }
         // Drag-drop target
         if (ImGui::BeginDragDropTarget()) {
-            if (auto* p = ImGui::AcceptDragDropPayload("ACT_IDX")) {
-                int src = *(const int*)p->Data;
-                if (src != i) {
-                    Activity moved = wf.activities[src];
-                    wf.activities.erase(wf.activities.begin() + src);
-                    int dst = (src < i) ? i - 1 : i;
-                    wf.activities.insert(wf.activities.begin() + dst, moved);
-                    m_selection.clear();
-                    m_selection.resize(wf.activities.size(), false);
-                    if (dst < (int)m_selection.size()) m_selection[dst] = true;
-                    m_lastClickedIdx = dst;
+            struct ActDragPayload { std::vector<Activity>* srcList; int srcIdx; };
+            if (auto* p = ImGui::AcceptDragDropPayload("ACT_TREE")) {
+                auto& payload = *(const ActDragPayload*)p->Data;
+                auto* srcList = payload.srcList;
+                auto* dstList = fn.parentList;
+                int src = payload.srcIdx;
+                int dst = fn.indexInParent;
+                if (srcList == dstList && src != dst) {
+                    Activity moved = (*srcList)[src];
+                    srcList->erase(srcList->begin() + src);
+                    int insertDst = (src < dst) ? dst - 1 : dst;
+                    dstList->insert(dstList->begin() + insertDst, std::move(moved));
                     if (OnChanged) OnChanged();
                 }
             }
@@ -392,33 +721,44 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         if (ImGui::BeginPopupContextItem("##ctx")) {
             if (ImGui::MenuItem("Edit")) {
                 m_draft            = a;
-                m_editIdx          = i;
+                m_editIdx          = fn.indexInParent;
                 m_openModal        = true;
                 m_keyCaptureActive = false;
                 m_scrollCapture    = false;
                 m_pickStage        = PickStage::None;
             }
-            if (ImGui::MenuItem("Duplicate"))
-                ctxDuplicateIdx = i;
-            ImGui::Separator();
-            if (ImGui::MenuItem("Select All"))
-                std::fill(m_selection.begin(), m_selection.end(), true);
-            if (ImGui::MenuItem("Select None")) {
-                std::fill(m_selection.begin(), m_selection.end(), false);
-                m_lastClickedIdx = -1;
+            if (ImGui::MenuItem("Duplicate")) {
+                Activity copy = a; copy.id = GenId();
+                fn.parentList->insert(fn.parentList->begin() + fn.indexInParent + 1,
+                                      std::move(copy));
+                if (OnChanged) OnChanged();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Move Up",   "Ctrl+Up",   false, i > 0))
-                ctxMoveUp = i;
-            if (ImGui::MenuItem("Move Down", "Ctrl+Down", false, i < (int)wf.activities.size()-1))
-                ctxMoveDown = i;
+            if (ImGui::MenuItem("Select All"))
+                for (auto& fn2 : m_flatNodes)
+                    if (fn2.act && fn2.kind != FlatNode::Kind::BlockEnd)
+                        m_selectedIds.insert(fn2.act->id);
+            if (ImGui::MenuItem("Select None")) { m_selectedIds.clear(); m_lastClickedId.clear(); }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Move Up",   nullptr, false, fn.indexInParent > 0)) {
+                std::swap((*fn.parentList)[fn.indexInParent],
+                          (*fn.parentList)[fn.indexInParent-1]);
+                if (OnChanged) OnChanged();
+            }
+            if (ImGui::MenuItem("Move Down", nullptr, false,
+                                fn.indexInParent < (int)fn.parentList->size()-1)) {
+                std::swap((*fn.parentList)[fn.indexInParent],
+                          (*fn.parentList)[fn.indexInParent+1]);
+                if (OnChanged) OnChanged();
+            }
             ImGui::Separator();
             if (ImGui::MenuItem(a.enabled ? "Disable" : "Enable")) {
-                if (a.enabled) ctxDisableIdx = i; else ctxEnableIdx = i;
+                a.enabled = !a.enabled;
+                if (OnChanged) OnChanged();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete")) {
-                m_confirmDeleteIdx   = i;
+                m_confirmDeleteId    = a.id;
                 m_confirmDeleteBatch = false;
                 m_pendingConfirmOpen = true;
             }
@@ -428,115 +768,27 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         // Inline action buttons (visible when selected)
         if (isSelected) {
             ImGui::SameLine();
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                ImVec2(2.f, ImGui::GetStyle().ItemSpacing.y));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.f, ImGui::GetStyle().ItemSpacing.y));
             if (ImGui::SmallButton(a.enabled ? "off##row" : "on##row")) {
                 a.enabled = !a.enabled;
                 if (OnChanged) OnChanged();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(a.enabled ? "Disable this activity" : "Enable this activity");
             ImGui::SameLine();
             if (ImGui::SmallButton("X##row")) {
-                m_confirmDeleteIdx   = i;
+                m_confirmDeleteId    = a.id;
                 m_confirmDeleteBatch = false;
                 m_pendingConfirmOpen = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete this activity");
             ImGui::PopStyleVar();
         }
 
+        ++visibleIdx;
         ImGui::PopID();
     }
 
     if (currentStep < 0) m_lastScrolledStep = -1;
 
-    // Process deferred operations
-    if (ctxMoveUp >= 1 && ctxMoveUp < (int)wf.activities.size()) {
-        std::swap(wf.activities[ctxMoveUp], wf.activities[ctxMoveUp - 1]);
-        if (ctxMoveUp   < (int)m_selection.size() &&
-            ctxMoveUp-1 < (int)m_selection.size())
-            std::swap(m_selection[ctxMoveUp], m_selection[ctxMoveUp - 1]);
-        if (OnChanged) OnChanged();
-    }
-    if (ctxMoveDown >= 0 && ctxMoveDown + 1 < (int)wf.activities.size()) {
-        std::swap(wf.activities[ctxMoveDown], wf.activities[ctxMoveDown + 1]);
-        if (ctxMoveDown   < (int)m_selection.size() &&
-            ctxMoveDown+1 < (int)m_selection.size())
-            std::swap(m_selection[ctxMoveDown], m_selection[ctxMoveDown + 1]);
-        if (OnChanged) OnChanged();
-    }
-    if (ctxDuplicateIdx >= 0 && ctxDuplicateIdx < (int)wf.activities.size()) {
-        Activity copy = wf.activities[ctxDuplicateIdx];
-        copy.id = GenId();
-        int insertAt = ctxDuplicateIdx + 1;
-        wf.activities.insert(wf.activities.begin() + insertAt, std::move(copy));
-        m_selection.clear();
-        m_selection.resize(wf.activities.size(), false);
-        m_selection[insertAt] = true;
-        m_lastClickedIdx = insertAt;
-        if (OnChanged) OnChanged();
-    }
-    if (ctxEnableIdx >= 0 && ctxEnableIdx < (int)wf.activities.size()) {
-        wf.activities[ctxEnableIdx].enabled = true;
-        if (OnChanged) OnChanged();
-    }
-    if (ctxDisableIdx >= 0 && ctxDisableIdx < (int)wf.activities.size()) {
-        wf.activities[ctxDisableIdx].enabled = false;
-        if (OnChanged) OnChanged();
-    }
-
-    // Keyboard navigation
-    if (ImGui::IsWindowFocused()) {
-        int n = (int)wf.activities.size();
-        if (n > 0 && !io.WantTextInput) {
-            int firstSel = -1, lastSel = -1, selCount = 0;
-            for (int j = 0; j < (int)m_selection.size(); ++j) {
-                if (m_selection[j]) {
-                    if (firstSel < 0) firstSel = j;
-                    lastSel = j;
-                    ++selCount;
-                }
-            }
-
-            bool up   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,  true);
-            bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
-
-            if (io.KeyCtrl && selCount == 1 && firstSel >= 0) {
-                if (up && firstSel > 0) {
-                    std::swap(wf.activities[firstSel], wf.activities[firstSel - 1]);
-                    std::swap(m_selection[firstSel], m_selection[firstSel - 1]);
-                    m_lastClickedIdx = firstSel - 1;
-                    if (OnChanged) OnChanged();
-                } else if (down && lastSel < n - 1) {
-                    std::swap(wf.activities[lastSel], wf.activities[lastSel + 1]);
-                    std::swap(m_selection[lastSel], m_selection[lastSel + 1]);
-                    m_lastClickedIdx = lastSel + 1;
-                    if (OnChanged) OnChanged();
-                }
-            } else if (!io.KeyCtrl) {
-                if (up && firstSel > 0) {
-                    if (!io.KeyShift)
-                        std::fill(m_selection.begin(), m_selection.end(), false);
-                    m_selection[firstSel - 1] = true;
-                    if (!io.KeyShift) m_lastClickedIdx = firstSel - 1;
-                }
-                if (down && lastSel >= 0 && lastSel < n - 1) {
-                    if (!io.KeyShift)
-                        std::fill(m_selection.begin(), m_selection.end(), false);
-                    m_selection[lastSel + 1] = true;
-                    if (!io.KeyShift) m_lastClickedIdx = lastSel + 1;
-                }
-                if (down && firstSel < 0 && n > 0) {
-                    m_selection[0] = true;
-                    m_lastClickedIdx = 0;
-                }
-            }
-        }
-    }
-
     ImGui::EndChild();
-
     ImGui::Separator();
 
     // ── Confirm delete modal ───────────────────────────────────────────────────
@@ -547,35 +799,48 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     if (ImGui::BeginPopupModal("Confirm Delete##act", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         if (m_confirmDeleteBatch) {
-            int cnt = 0;
-            for (bool b : m_selection) if (b) ++cnt;
-            ImGui::Text("Delete %d selected %s?", cnt, cnt == 1 ? "activity" : "activities");
+            ImGui::Text("Delete %d selected %s?",
+                (int)m_selectedIds.size(),
+                m_selectedIds.size()==1?"activity":"activities");
         } else {
-            ImGui::Text("Delete activity %d?", m_confirmDeleteIdx + 1);
+            ImGui::Text("Delete this activity?");
         }
         ImGui::Separator();
-        if (ImGui::Button("Yes##cdel", ImVec2(80, 0))) {
+        if (ImGui::Button("Yes##cdel", ImVec2(80,0))) {
             if (m_confirmDeleteBatch) {
-                int total = (int)wf.activities.size();
-                for (int i = total - 1; i >= 0; --i)
-                    if (i < (int)m_selection.size() && m_selection[i])
-                        wf.activities.erase(wf.activities.begin() + i);
-                m_selection.clear();
+                // Delete all selected from their respective parent lists
+                // Collect (parentList*, index) sorted descending per list
+                std::vector<std::pair<std::vector<Activity>*,int>> toDelete;
+                for (auto& fn2 : m_flatNodes)
+                    if (fn2.act && fn2.kind != FlatNode::Kind::BlockEnd
+                        && m_selectedIds.count(fn2.act->id))
+                        toDelete.push_back({fn2.parentList, fn2.indexInParent});
+                // Sort descending by index within each list to erase safely
+                std::sort(toDelete.begin(), toDelete.end(),
+                    [](auto& a, auto& b){ return a.second > b.second; });
+                for (auto& [pl, idx] : toDelete)
+                    if (idx >= 0 && idx < (int)pl->size())
+                        pl->erase(pl->begin() + idx);
+                m_selectedIds.clear();
                 m_editIdx = -1;
-            } else if (m_confirmDeleteIdx >= 0 &&
-                       m_confirmDeleteIdx < (int)wf.activities.size()) {
-                wf.activities.erase(wf.activities.begin() + m_confirmDeleteIdx);
-                m_selection.clear();
+            } else if (!m_confirmDeleteId.empty()) {
+                for (auto& fn2 : m_flatNodes) {
+                    if (fn2.act && fn2.act->id == m_confirmDeleteId) {
+                        fn2.parentList->erase(fn2.parentList->begin() + fn2.indexInParent);
+                        m_selectedIds.erase(m_confirmDeleteId);
+                        break;
+                    }
+                }
                 m_editIdx = -1;
             }
-            m_confirmDeleteIdx   = -1;
+            m_confirmDeleteId    = "";
             m_confirmDeleteBatch = false;
             if (OnChanged) OnChanged();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("No##cdel", ImVec2(80, 0))) {
-            m_confirmDeleteIdx   = -1;
+        if (ImGui::Button("No##cdel", ImVec2(80,0))) {
+            m_confirmDeleteId    = "";
             m_confirmDeleteBatch = false;
             ImGui::CloseCurrentPopup();
         }
@@ -593,13 +858,108 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     RenderModal(wf);
 }
 
+// ── Snipping tool overlay ─────────────────────────────────────────────────────
+
+void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse;
+
+    if (ImGui::Begin("##snipoverlay", nullptr, flags)) {
+        auto* dl  = ImGui::GetWindowDrawList();
+        ImVec2 sz = io.DisplaySize;
+
+        // Draw screenshot dimmed
+        if (m_snipTexture)
+            dl->AddImage((ImTextureID)(intptr_t)m_snipTexture,
+                         ImVec2(0,0), sz,
+                         ImVec2(0,0), ImVec2(1,1), IM_COL32(80,80,80,255));
+
+        ImVec2 mp = io.MousePos;
+
+        if (ImGui::IsMouseClicked(0) && !m_snipDragging) {
+            m_snipX1 = m_snipX2 = (int)mp.x;
+            m_snipY1 = m_snipY2 = (int)mp.y;
+            m_snipDragging = true;
+        }
+        if (m_snipDragging && ImGui::IsMouseDown(0)) {
+            m_snipX2 = (int)mp.x;
+            m_snipY2 = (int)mp.y;
+        }
+
+        int x1 = std::min(m_snipX1, m_snipX2);
+        int y1 = std::min(m_snipY1, m_snipY2);
+        int x2 = std::max(m_snipX1, m_snipX2);
+        int y2 = std::max(m_snipY1, m_snipY2);
+
+        if (m_snipDragging && m_snipTexture && m_snipW > 0 && m_snipH > 0) {
+            // Draw selected region at full brightness
+            float u1 = (float)x1 / m_snipW, v1 = (float)y1 / m_snipH;
+            float u2 = (float)x2 / m_snipW, v2 = (float)y2 / m_snipH;
+            dl->AddImage((ImTextureID)(intptr_t)m_snipTexture,
+                         ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
+                         ImVec2(u1,v1), ImVec2(u2,v2), IM_COL32(255,255,255,255));
+            // White border
+            dl->AddRect(ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
+                        IM_COL32(255,255,255,255), 0, 0, 2.0f);
+            // Size label
+            char sizeLabel[64];
+            snprintf(sizeLabel, sizeof(sizeLabel), "%d x %d", x2-x1, y2-y1);
+            dl->AddText(ImVec2((float)x1+4, (float)y2+4),
+                        IM_COL32(255,255,255,255), sizeLabel);
+        }
+
+        // Instruction text
+        ImGui::SetCursorPos(ImVec2(8, 8));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,0.3f,1));
+        ImGui::Text("Drag to select region. Release to capture. Esc = cancel.");
+        ImGui::PopStyleColor();
+
+        // Confirm on mouse release
+        if (m_snipDragging && ImGui::IsMouseReleased(0)) {
+            m_snipDragging = false;
+            int w = x2 - x1;
+            int h = y2 - y1;
+            if (w > 0 && h > 0 && !m_snipPixels.empty() &&
+                m_snipW > 0 && m_snipH > 0) {
+                std::visit([&](auto&& v) {
+                    using T = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
+                        v.x1 = x1; v.y1 = y1; v.x2 = x2; v.y2 = y2;
+                        v.sample_w = w; v.sample_h = h;
+                        v.sample.clear(); v.sample.reserve(w * h);
+                        for (int row = y1; row < y2 && row < m_snipH; ++row)
+                            for (int col = x1; col < x2 && col < m_snipW; ++col)
+                                v.sample.push_back(m_snipPixels[(size_t)row * m_snipW + col]);
+                    }
+                }, m_draft.data);
+            }
+            m_snipStage = SnipStage::Done;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            m_snipDragging = false;
+            m_snipStage    = SnipStage::Done; // cancel — no changes applied
+        }
+    }
+    ImGui::End();
+}
+
 // ── Coordinate + color picker overlay ────────────────────────────────────────
 void ActivityEditorWidget::RenderPickOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pos = io.MousePos;
     pos.x += 16.f; pos.y += 16.f;
+    // Clamp to screen (both upper and lower bounds)
     if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
-    if (pos.y + 100 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 100;
+    if (pos.y + 110 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 110;
+    if (pos.x < 0) pos.x = 0;
+    if (pos.y < 0) pos.y = 0;
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -620,23 +980,18 @@ void ActivityEditorWidget::RenderPickOverlay() {
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
 
         if (m_pickStage == PickStage::RangeTo) {
-            if (auto* pr = std::get_if<PixelRangeCheckActivity>(&m_draft.data)) {
-                ImGui::Text("Rect: %d x %d",
-                            std::abs(gx - pr->x1) + 1, std::abs(gy - pr->y1) + 1);
-            }
+            if (auto* pr = std::get_if<PixelRangeCheckActivity>(&m_draft.data))
+                ImGui::Text("Rect: %d x %d", std::abs(gx - pr->x1)+1, std::abs(gy - pr->y1)+1);
         }
 
         bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data) ||
                            std::holds_alternative<PixelRangeCheckActivity>(m_draft.data);
         if (isPixelPick) {
 #if !defined(__APPLE__)
-            // Per-frame color preview (on macOS a ScreenCaptureKit round-trip
-            // every frame would stall the UI thread, so skip it there)
             uint32_t c = EditorPixelChecker()->GetPixelRGB(gx, gy);
             float r = ((c>>16)&0xFF)/255.f, g2 = ((c>>8)&0xFF)/255.f, b = (c&0xFF)/255.f;
-            ImGui::ColorButton("##pcol", ImVec4(r, g2, b, 1.f),
-                ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip,
-                ImVec2(14, 14));
+            ImGui::ColorButton("##pcol", ImVec4(r,g2,b,1.f),
+                ImGuiColorEditFlags_NoPicker|ImGuiColorEditFlags_NoTooltip, ImVec2(14,14));
             ImGui::SameLine();
             ImGui::Text("#%06X", c);
 #endif
@@ -648,6 +1003,7 @@ void ActivityEditorWidget::RenderPickOverlay() {
             ApplyPickedCoords(gx, gy);
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             m_pickStage = PickStage::None;
+            ExitFullscreenMode();
             m_openModal = true;
         }
     }
@@ -680,54 +1036,76 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
                 done = false;
             } else {
                 v.x2 = x; v.y2 = y;
-                // Grab the reference image right away from the picked rect
-                CaptureRangeSample(v);
+                // Capture sample from the picked rect
+                int left = std::min(v.x1, v.x2);
+                int top  = std::min(v.y1, v.y2);
+                int w    = std::abs(v.x2 - v.x1) + 1;
+                int h    = std::abs(v.y2 - v.y1) + 1;
+                PixelBuffer buf = EditorPixelChecker()->CaptureRegion(left, top, w, h);
+                if (!buf.Empty()) {
+                    v.sample_w = buf.width; v.sample_h = buf.height;
+                    v.sample   = std::move(buf.pixels);
+                }
             }
         }
     }, m_draft.data);
 
     if (done) {
         m_pickStage = PickStage::None;
+        ExitFullscreenMode();
         m_openModal = true;
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Modal editor ──────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::RenderModal(Workflow& wf) {
-    ImGui::SetNextWindowSize(ImVec2(480, 420), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(500, 460), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("##actmodal", nullptr, ImGuiWindowFlags_NoResize)) return;
 
     ImGui::Text(m_editIdx < 0 ? "Add Activity" : "Edit Activity");
     ImGui::Separator();
 
-    int typeIdx = TypeIndex(m_draft.data);
-    if (ImGui::Combo("Type", &typeIdx, kTypes, IM_ARRAYSIZE(kTypes))) {
-        m_draft.data       = DefaultData(typeIdx);
+    int dispIdx = VariantToDisplayIdx(m_draft.data);
+    if (dispIdx < 0) dispIdx = 0; // hidden type (pixel_check) → show as first
+    if (ImGui::Combo("Type", &dispIdx, kTypes, kNumTypes)) {
+        m_draft.data       = DefaultData(dispIdx);
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
         m_scrollAccum      = 0.f;
+        // Auto-name new block types
+        if (IsBlockType(m_draft.data)) {
+            const char* prefix = (dispIdx == 7) ? "Pixel Check"
+                               : (dispIdx == 12) ? "Loop"
+                               : (dispIdx == 13) ? "If"
+                               : (dispIdx == 14) ? "Switch" : "";
+            int vi = kTypeToVariantIdx[dispIdx];
+            AutoNameBlock(m_draft, wf.activities, prefix, vi);
+        }
     }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Type of action to perform");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type of action to perform");
     ImGui::Checkbox("Enabled", &m_draft.enabled);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Uncheck to skip this activity without deleting it");
     ImGui::Separator();
 
     float fieldsH = ImGui::GetContentRegionAvail().y
                     - ImGui::GetFrameHeightWithSpacing() * 2.0f
                     - ImGui::GetStyle().ItemSpacing.y * 2.0f;
     ImGui::BeginChild("##actfields", ImVec2(0, fieldsH), false);
-    RenderActivityFields(m_draft.data);
+    RenderActivityFields(m_draft.data, wf);
     ImGui::EndChild();
 
     ImGui::Separator();
-    if (ImGui::Button("OK", ImVec2(100, 0))) {
+    if (ImGui::Button("OK", ImVec2(100,0))) {
         if (m_editIdx < 0) {
             wf.activities.push_back(m_draft);
         } else {
-            wf.activities[m_editIdx] = m_draft;
+            // Find by activity ID — works for both top-level and nested activities
+            for (auto& fn : m_flatNodes) {
+                if (fn.act && fn.act->id == m_draft.id && fn.parentList) {
+                    (*fn.parentList)[fn.indexInParent] = m_draft;
+                    break;
+                }
+            }
         }
         if (OnChanged) OnChanged();
         m_keyCaptureActive = false;
@@ -735,7 +1113,7 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(100,0))) {
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
         ImGui::CloseCurrentPopup();
@@ -744,63 +1122,66 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
     ImGui::EndPopup();
 }
 
-void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
-    std::visit([this](auto&& v) {
+// ── Activity field rendering ──────────────────────────────────────────────────
+
+void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workflow& wf) {
+    bool isGlobal = (wf.window.type == WindowTarget::Type::Global);
+
+    std::visit([&](auto&& v) {
         using T = std::decay_t<decltype(v)>;
 
-        auto posMode = [](PositionMode& pm) {
-            int idx = (pm == PositionMode::Relative) ? 1 : 0;
-            ImGui::SetNextItemWidth(140);
-            if (ImGui::Combo("Position mode", &idx, PosModeNames, 2))
-                pm = idx == 1 ? PositionMode::Relative : PositionMode::Absolute;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Absolute = global screen coordinates\n"
-                                  "Relative = offset from the target window's origin");
+        // Position mode helper: forced absolute for Global workflows
+        auto posMode = [&](PositionMode& pm) {
+            if (isGlobal) {
+                pm = PositionMode::Absolute;
+                ImGui::TextDisabled("Position mode: absolute (global workflow)");
+            } else {
+                int idx = (pm == PositionMode::Relative) ? 1 : 0;
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::Combo("Position mode", &idx, PosModeNames, 2))
+                    pm = idx == 1 ? PositionMode::Relative : PositionMode::Absolute;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Absolute = global screen coordinates\n"
+                                      "Relative = offset from the target window's origin");
+            }
         };
         auto btnCombo = [](MouseButton& b) {
             int idx = (b == MouseButton::Right) ? 1 : (b == MouseButton::Middle) ? 2 : 0;
             ImGui::SetNextItemWidth(100);
-            if (ImGui::Combo("Button", &idx, BtnNames, 3))
-                b = (MouseButton)idx;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Which mouse button to click");
+            if (ImGui::Combo("Button", &idx, BtnNames, 3)) b = (MouseButton)idx;
         };
         auto delayFields = [](int& dm, int& dr) {
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &dm);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before executing the next activity");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Random range (ms)", &dr);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Add a random delay of 0 to N ms (makes timing less predictable)");
-            dm = std::max(0, dm); dr = std::max(0, dr);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &dm);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Random range (ms)", &dr);
+            dm = std::max(0,dm); dr = std::max(0,dr);
         };
-        auto xyPick = [this](int& x, int& y, PickStage stage) {
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("X", &x);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Y", &y);
+        auto xyPick = [&](int& x, int& y, PickStage stage, PositionMode curPm) {
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("X", &x);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y", &y);
             if (ImGui::Button("Pick position##xy")) {
-                m_pickStage = stage;
-                ImGui::CloseCurrentPopup();
+                if (!isGlobal && curPm == PositionMode::Relative &&
+                    wf.window.title.empty() && wf.window.class_name.empty() &&
+                    wf.window.handle == 0) {
+                    m_showNoWindowDlg = true;
+                } else {
+                    EnterFullscreenMode();
+                    m_pickStage = stage;
+                    ImGui::CloseCurrentPopup();
+                }
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Click, then hover to pick a screen position");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click then hover over screen to pick");
         };
 
         if constexpr (std::is_same_v<T,MouseMoveActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single);
+            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
             delayFields(v.delay_ms, v.delay_rand_ms);
 
         } else if constexpr (std::is_same_v<T,MouseClickActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single);
+            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
             btnCombo(v.button);
             ImGui::Checkbox("Double click", &v.double_click);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Send a double-click instead of a single click");
             delayFields(v.delay_ms, v.delay_rand_ms);
 
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
@@ -808,64 +1189,35 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             ImGui::SetNextItemWidth(120); ImGui::InputInt("From X", &v.from_x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("From Y", &v.from_y);
             if (ImGui::Button("Pick start##dfs")) {
-                m_pickStage = PickStage::DragFrom;
-                ImGui::CloseCurrentPopup();
+                EnterFullscreenMode(); m_pickStage = PickStage::DragFrom; ImGui::CloseCurrentPopup();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag start position");
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To X", &v.to_x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To Y", &v.to_y);
             if (ImGui::Button("Pick end##dfe")) {
-                m_pickStage = PickStage::DragTo;
-                ImGui::CloseCurrentPopup();
+                EnterFullscreenMode(); m_pickStage = PickStage::DragTo; ImGui::CloseCurrentPopup();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the drag end position");
             btnCombo(v.button);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Duration (ms)", &v.duration_ms);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the drag motion takes");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
             v.duration_ms = std::max(1, v.duration_ms);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,MouseScrollActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delta X", &v.delta_x);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Horizontal scroll amount");
-
+            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delta X", &v.delta_x);
             if (m_scrollCapture) {
                 m_scrollAccum += ImGui::GetIO().MouseWheel;
-                ImGui::TextColored(ImVec4(1,0.9f,0.3f,1),
-                    "Scroll now... delta Y: %d", (int)m_scrollAccum);
+                ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Scroll now... delta Y: %d", (int)m_scrollAccum);
                 if (ImGui::Button("Done##sc") || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
-                    v.delta_y       = (int)m_scrollAccum;
-                    m_scrollCapture = false;
-                    m_scrollAccum   = 0.f;
+                    v.delta_y = (int)m_scrollAccum; m_scrollCapture = false; m_scrollAccum = 0.f;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel##sc")) {
-                    m_scrollCapture = false;
-                    m_scrollAccum   = 0.f;
-                }
+                if (ImGui::Button("Cancel##sc")) { m_scrollCapture = false; m_scrollAccum = 0.f; }
             } else {
-                ImGui::SetNextItemWidth(120);
-                ImGui::InputInt("Delta Y", &v.delta_y);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Vertical scroll amount (positive = up, negative = down)");
-                if (ImGui::Button("Capture scroll##sc")) {
-                    m_scrollCapture = true;
-                    m_scrollAccum   = 0.f;
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Scroll your mouse wheel to capture the delta");
+                ImGui::SetNextItemWidth(120); ImGui::InputInt("Delta Y", &v.delta_y);
+                if (ImGui::Button("Capture scroll##sc")) { m_scrollCapture = true; m_scrollAccum = 0.f; }
             }
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,KeyPressActivity>) {
             if (m_keyCaptureActive) {
@@ -880,8 +1232,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                         key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) continue;
                     auto name = ImGuiKeyToKeyName(key);
                     if (!name.empty()) {
-                        v.key = name;
-                        v.modifiers.clear();
+                        v.key = name; v.modifiers.clear();
                         ImGuiIO& kio = ImGui::GetIO();
                         if (kio.KeyCtrl)  v.modifiers.push_back("ctrl");
                         if (kio.KeyShift) v.modifiers.push_back("shift");
@@ -896,14 +1247,10 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 if (ImGui::InputText("Key##kp", keyBuf, sizeof(keyBuf))) v.key = keyBuf;
                 ImGui::TextDisabled("e.g. space, f1, a, enter");
                 if (ImGui::Button("Capture key##kp")) m_keyCaptureActive = true;
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Click then press a key (hold Ctrl/Shift/Alt for modifiers)");
                 ImGui::Text("Modifiers:");
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", v.modifiers.empty() ? "(none)" : [&]{
-                    std::string s;
-                    for (auto& m : v.modifiers) s += m + " ";
-                    return s;
+                    std::string s; for (auto& m : v.modifiers) s += m + " "; return s;
                 }().c_str());
             }
             delayFields(v.delay_ms, v.delay_rand_ms);
@@ -913,181 +1260,93 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
             strncpy(textBuf, v.text.c_str(), sizeof(textBuf)-1);
             if (ImGui::InputTextMultiline("Text", textBuf, sizeof(textBuf), ImVec2(0,80)))
                 v.text = textBuf;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Text to type character by character");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Char delay (ms)", &v.delay_between_chars_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Delay between each typed character");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Char delay (ms)", &v.delay_between_chars_ms);
             v.delay_between_chars_ms = std::max(0, v.delay_between_chars_ms);
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,WaitActivity>) {
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Duration (ms)", &v.duration_ms);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long to wait");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Random range (ms)", &v.random_range_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Add a random extra delay of 0 to N ms");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Random range (ms)", &v.random_range_ms);
             v.duration_ms     = std::max(0, v.duration_ms);
             v.random_range_ms = std::max(0, v.random_range_ms);
 
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
+            // Legacy type — read-only display with basic editing
             posMode(v.pos_mode);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("X", &v.x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Y", &v.y);
-            if (ImGui::Button("Pick position##pcx")) {
-                m_pickStage = PickStage::Single;
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Click to hover over screen; also captures the pixel color");
-
-            float col[3] = {
-                ((v.color_rgb>>16)&0xFF)/255.f,
-                ((v.color_rgb>> 8)&0xFF)/255.f,
-                ( v.color_rgb     &0xFF)/255.f
-            };
+            float col[3] = {((v.color_rgb>>16)&0xFF)/255.f,
+                            ((v.color_rgb>> 8)&0xFF)/255.f,
+                            ( v.color_rgb     &0xFF)/255.f};
             ImGui::SetNextItemWidth(200);
-            if (ImGui::ColorEdit3("Color", col)) {
-                v.color_rgb = ((uint32_t)(col[0]*255)<<16) |
-                              ((uint32_t)(col[1]*255)<< 8) |
-                               (uint32_t)(col[2]*255);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Target pixel color to match");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Tolerance", &v.tolerance);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
+            if (ImGui::ColorEdit3("Color", col))
+                v.color_rgb = ((uint32_t)(col[0]*255)<<16)|((uint32_t)(col[1]*255)<<8)|(uint32_t)(col[2]*255);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Tolerance", &v.tolerance);
             v.tolerance = std::max(0, std::min(255, v.tolerance));
-
-            int actionIdx = (v.on_no_match == PixelCheckAction::SkipIteration) ? 1
-                          : (v.on_no_match == PixelCheckAction::StopWorkflow)   ? 2 : 0;
-            ImGui::SetNextItemWidth(160);
-            if (ImGui::Combo("On no match", &actionIdx, PixelActionNames, 3))
-                v.on_no_match = (PixelCheckAction)actionIdx;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("What to do if the pixel color does not match");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Retry interval (ms)", &v.retry_interval_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How often to re-check the pixel when retrying");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Retry timeout (ms, 0=inf)", &v.retry_timeout_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            ImGui::TextDisabled("(legacy pixel_check — consider using pixel_range_check)");
 
         } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
-            posMode(v.pos_mode);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Start X##prc", &v.x1);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Start Y##prc", &v.y1);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("End X##prc",   &v.x2);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("End Y##prc",   &v.y2);
+            // Name field
+            static char nameBuf[64]{};
+            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
+            if (ImGui::InputText("Name##prc", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Display name in the activity tree");
 
-            if (ImGui::Button("Pick range##prc")) {
-                m_pickStage = PickStage::RangeFrom;
+            posMode(v.pos_mode);
+
+            // Snip capture button (primary workflow)
+            if (ImGui::Button("Capture region##prc")) {
+                EnterFullscreenMode();
+                m_snipStage = SnipStage::WaitFrame;
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Pick start corner, then end corner;\n"
-                                  "the rect is captured as the reference sample");
+                ImGui::SetTooltip("Expand to full screen, drag to select region, capture sample");
+
             ImGui::SameLine();
-            if (ImGui::Button("Pick end##prc")) {
-                m_pickStage = PickStage::RangeTo;
-                ImGui::CloseCurrentPopup();
+
+            // Manual coordinate + old-style pick (secondary)
+            if (ImGui::Button("Pick range##prc")) {
+                EnterFullscreenMode(); m_pickStage = PickStage::RangeFrom; ImGui::CloseCurrentPopup();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Re-pick only the end corner (re-captures the sample)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick start then end corner (no screenshot)");
+
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("X1##prc", &v.x1);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y1##prc", &v.y1);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("X2##prc", &v.x2);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y2##prc", &v.y2);
 
             if (v.sample.empty()) {
                 ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none)");
             } else {
-                ImGui::Text("Sample: %d x %d (%d px)",
-                            v.sample_w, v.sample_h, v.sample_w * v.sample_h);
-            }
-            if (ImGui::Button("Capture sample##prc")) {
-                CaptureRangeSample(v);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Capture the rect from the current screen as the\n"
-                                  "reference image (uses coordinates as absolute)");
-            if (!v.sample.empty()) {
+                ImGui::Text("Sample: %d x %d (%d px)", v.sample_w, v.sample_h, v.sample_w*v.sample_h);
                 ImGui::SameLine();
-                if (ImGui::Button("Clear##prc")) {
-                    v.sample.clear();
-                    v.sample_w = v.sample_h = 0;
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Discard the captured sample");
+                if (ImGui::Button("Clear##prc")) { v.sample.clear(); v.sample_w = v.sample_h = 0; }
             }
 
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Tolerance##prc", &v.tolerance);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Tolerance##prc", &v.tolerance);
             v.tolerance = std::max(0, std::min(255, v.tolerance));
-
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Match percent##prc", &v.match_percent);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Percentage of pixels that must match the sample\n"
-                                  "for the region to count as matching");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Match percent##prc", &v.match_percent);
             v.match_percent = std::max(0, std::min(100, v.match_percent));
-
-            int actionIdx = (v.on_no_match == PixelCheckAction::SkipIteration) ? 1
-                          : (v.on_no_match == PixelCheckAction::StopWorkflow)   ? 2 : 0;
-            ImGui::SetNextItemWidth(160);
-            if (ImGui::Combo("On no match##prc", &actionIdx, PixelActionNames, 3))
-                v.on_no_match = (PixelCheckAction)actionIdx;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("What to do if the region does not match the sample");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Retry interval (ms)##prc", &v.retry_interval_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How often to re-check the region when retrying");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Retry timeout (ms, 0=inf)##prc", &v.retry_timeout_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Stop retrying after this many ms (0 = retry forever)");
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)##prc", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Retry interval (ms)##prc", &v.retry_interval_ms);
+            v.retry_interval_ms = std::max(0, v.retry_interval_ms);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Retry timeout (ms, 0=once)##prc", &v.retry_timeout_ms);
+            v.retry_timeout_ms = std::max(0, v.retry_timeout_ms);
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##prc", &v.delay_ms);
+            ImGui::TextDisabled("Children (match/no-match) are edited inline in the activity list.");
 
         } else if constexpr (std::is_same_v<T,SystemActionActivity>) {
-            static const char* actionNames[] = {
-                "Shutdown","Restart","Sleep","Hibernate","Lock","Log out"
-            };
+            static const char* actionNames[] = {"Shutdown","Restart","Sleep","Hibernate","Lock","Log out"};
             int idx = (int)v.action;
             ImGui::SetNextItemWidth(140);
-            if (ImGui::Combo("Action", &idx, actionNames, 6))
-                v.action = (SystemAction)idx;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("System-level action to perform");
-
-            bool forceApplies = (v.action == SystemAction::Shutdown  ||
-                                 v.action == SystemAction::Restart   ||
-                                 v.action == SystemAction::Hibernate ||
-                                 v.action == SystemAction::LogOut);
+            if (ImGui::Combo("Action", &idx, actionNames, 6)) v.action = (SystemAction)idx;
+            bool forceApplies = (v.action==SystemAction::Shutdown||v.action==SystemAction::Restart||
+                                 v.action==SystemAction::Hibernate||v.action==SystemAction::LogOut);
             ImGui::BeginDisabled(!forceApplies);
             ImGui::Checkbox("Force (skip save dialogs)", &v.force);
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Force close applications without prompts (shutdown/restart/hibernate/logout only)");
-
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms after executing (useful for non-terminal actions like Lock)");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
             v.delay_ms = std::max(0, v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,RunWorkflowActivity>) {
@@ -1095,40 +1354,177 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data) {
                 ImGui::TextDisabled("Filter:"); ImGui::SameLine();
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##wffilter", m_wfFilterBuf, sizeof(m_wfFilterBuf));
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Type to filter workflows by name");
-
-                ImGui::BeginChild("##wflist_rw", ImVec2(0, 110), true);
+                ImGui::BeginChild("##wflist_rw", ImVec2(0,110), true);
                 std::string filterLow(m_wfFilterBuf);
                 for (auto& c : filterLow) c = (char)std::tolower((unsigned char)c);
-
                 for (auto& wf2 : *m_workflows) {
                     std::string nameLow = wf2.name;
                     for (auto& c : nameLow) c = (char)std::tolower((unsigned char)c);
-                    if (!filterLow.empty() && nameLow.find(filterLow) == std::string::npos)
-                        continue;
+                    if (!filterLow.empty() && nameLow.find(filterLow)==std::string::npos) continue;
                     bool selected = (v.workflow_id == wf2.id);
-                    char lbl[256];
-                    snprintf(lbl, sizeof(lbl), "%s##rwf%s", wf2.name.c_str(), wf2.id.c_str());
-                    if (ImGui::Selectable(lbl, selected))
-                        v.workflow_id = wf2.id;
+                    char lbl[256]; snprintf(lbl,sizeof(lbl),"%s##rwf%s",wf2.name.c_str(),wf2.id.c_str());
+                    if (ImGui::Selectable(lbl, selected)) v.workflow_id = wf2.id;
                 }
                 ImGui::EndChild();
                 ImGui::TextDisabled("ID: %.24s", v.workflow_id.c_str());
             } else {
                 static char idBuf[64]{};
                 strncpy(idBuf, v.workflow_id.c_str(), sizeof(idBuf)-1);
-                if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf)))
-                    v.workflow_id = idBuf;
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("ID of the workflow to run as a sub-workflow");
+                if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf))) v.workflow_id = idBuf;
             }
-            ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("Delay after (ms)", &v.delay_ms);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Wait this many ms before the next activity");
-        }
-    }, data);
-}
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
 
-void ActivityEditorWidget::RenderMoveButtons(Workflow& /*wf*/, int /*idx*/) {}
+        } else if constexpr (std::is_same_v<T,RunActivityActivity>) {
+            // Selectable list of all activities in the workflow
+            ImGui::Text("Select activity to reuse:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##actfilter_ra", m_actFilterBuf, sizeof(m_actFilterBuf));
+            ImGui::BeginChild("##actlist_ra", ImVec2(0,110), true);
+            std::string filterLow(m_actFilterBuf);
+            for (auto& c : filterLow) c = (char)std::tolower((unsigned char)c);
+            // Walk flat nodes to show all activities
+            for (auto& fn : m_flatNodes) {
+                if (!fn.act || fn.kind == FlatNode::Kind::BlockEnd) continue;
+                std::string summary = ActivitySummary(*fn.act);
+                std::string sumLow  = summary;
+                for (auto& c : sumLow) c = (char)std::tolower((unsigned char)c);
+                if (!filterLow.empty() && sumLow.find(filterLow)==std::string::npos) continue;
+                bool sel = (v.activity_id == fn.act->id);
+                char lbl[256]; snprintf(lbl,sizeof(lbl),"%s##ra%s",summary.c_str(),fn.act->id.c_str());
+                if (ImGui::Selectable(lbl, sel)) v.activity_id = fn.act->id;
+            }
+            ImGui::EndChild();
+            if (!v.activity_id.empty())
+                ImGui::TextDisabled("ID: %.24s", v.activity_id.c_str());
+            else
+                ImGui::TextColored(ImVec4(1,0.5f,0.3f,1), "No activity selected");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+
+        } else if constexpr (std::is_same_v<T,SetVariableActivity>) {
+            static char nameBuf[64]{};
+            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
+            if (ImGui::InputText("Variable name##sv", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+
+            int opIdx = (int)v.op;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::Combo("Operation##sv", &opIdx, VarOpNames, 4)) v.op = (VarOp)opIdx;
+
+            if (v.op == VarOp::Set) {
+                static char valBuf[256]{};
+                strncpy(valBuf, v.value.c_str(), sizeof(valBuf)-1);
+                if (ImGui::InputText("Value##sv", valBuf, sizeof(valBuf))) v.value = valBuf;
+            } else if (v.op == VarOp::Increment || v.op == VarOp::Decrement) {
+                ImGui::SetNextItemWidth(120); ImGui::InputInt("Step##sv", &v.step);
+                v.step = std::max(1, v.step);
+            } else if (v.op == VarOp::Random) {
+                ImGui::SetNextItemWidth(120); ImGui::InputInt("Min##sv", &v.rand_min);
+                ImGui::SetNextItemWidth(120); ImGui::InputInt("Max##sv", &v.rand_max);
+                if (v.rand_max < v.rand_min) v.rand_max = v.rand_min;
+            }
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##sv", &v.delay_ms);
+
+        } else if constexpr (std::is_same_v<T,LoopActivity>) {
+            static char nameBuf[64]{};
+            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
+            if (ImGui::InputText("Name##lp", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Count (0=infinite)##lp", &v.count);
+            v.count = std::max(0, v.count);
+            static char iterBuf[64]{};
+            strncpy(iterBuf, v.iter_var.c_str(), sizeof(iterBuf)-1);
+            if (ImGui::InputText("Write iteration to var##lp", iterBuf, sizeof(iterBuf)))
+                v.iter_var = iterBuf;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave empty to not track iteration");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##lp", &v.delay_ms);
+            ImGui::TextDisabled("Children: edit inline in the activity list.");
+
+        } else if constexpr (std::is_same_v<T,IfActivity>) {
+            static char nameBuf[64]{};
+            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
+            if (ImGui::InputText("Name##if", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+            ImGui::Separator();
+            ImGui::Text("Condition:");
+            // LHS
+            ImGui::Checkbox("LHS is var##if", &v.cond.lhs_is_var); ImGui::SameLine();
+            static char lhsBuf[64]{}; strncpy(lhsBuf, v.cond.lhs.c_str(), sizeof(lhsBuf)-1);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputText("LHS##if", lhsBuf, sizeof(lhsBuf))) v.cond.lhs = lhsBuf;
+            // OP
+            int opIdx = (int)v.cond.op;
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::Combo("Op##if", &opIdx, CondOpNames, 7)) v.cond.op = (ConditionOp)opIdx;
+            // RHS
+            ImGui::Checkbox("RHS is var##if", &v.cond.rhs_is_var); ImGui::SameLine();
+            static char rhsBuf[64]{}; strncpy(rhsBuf, v.cond.rhs.c_str(), sizeof(rhsBuf)-1);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputText("RHS##if", rhsBuf, sizeof(rhsBuf))) v.cond.rhs = rhsBuf;
+            ImGui::Separator();
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##if", &v.delay_ms);
+            ImGui::TextDisabled("then/else branches: edit inline in the activity list.");
+
+        } else if constexpr (std::is_same_v<T,SwitchActivity>) {
+            static char nameBuf[64]{};
+            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
+            if (ImGui::InputText("Name##sw", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+            static char varBuf[64]{};
+            strncpy(varBuf, v.var_name.c_str(), sizeof(varBuf)-1);
+            if (ImGui::InputText("Variable##sw", varBuf, sizeof(varBuf))) v.var_name = varBuf;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runtime variable to test");
+            ImGui::Separator();
+            ImGui::Text("Cases:");
+            ImGui::BeginChild("##cases_sw", ImVec2(0, 100), true);
+            for (int ci = 0; ci < (int)v.cases.size(); ++ci) {
+                ImGui::PushID(ci);
+                static char cvBuf[64]{};
+                strncpy(cvBuf, v.cases[ci].value.c_str(), sizeof(cvBuf)-1);
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputText("##cv", cvBuf, sizeof(cvBuf))) v.cases[ci].value = cvBuf;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X##del_case")) {
+                    v.cases.erase(v.cases.begin() + ci); --ci;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            if (ImGui::Button("+ Case##sw")) {
+                SwitchCase sc;
+                sc.body = std::make_shared<std::vector<Activity>>();
+                v.cases.push_back(std::move(sc));
+            }
+            ImGui::Separator();
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##sw", &v.delay_ms);
+            ImGui::TextDisabled("Case bodies: edit inline in the activity list.");
+        }
+
+    }, data);
+
+    // "No window selected" guard dialog
+    if (m_showNoWindowDlg) {
+        ImGui::OpenPopup("No Window##guard");
+        m_showNoWindowDlg = false;
+    }
+    if (ImGui::BeginPopupModal("No Window##guard", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("No target window selected.");
+        ImGui::Text("Pick a window first, or switch to Absolute mode.");
+        ImGui::Separator();
+        if (ImGui::Button("Use Absolute##grd", ImVec2(110,0))) {
+            std::visit([](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T,MouseMoveActivity>   ||
+                              std::is_same_v<T,MouseClickActivity>   ||
+                              std::is_same_v<T,MouseDragActivity>    ||
+                              std::is_same_v<T,MouseScrollActivity>  ||
+                              std::is_same_v<T,PixelCheckActivity>   ||
+                              std::is_same_v<T,PixelRangeCheckActivity>)
+                    v.pos_mode = PositionMode::Absolute;
+            }, data);
+            // Then enter pick mode
+            EnterFullscreenMode();
+            m_pickStage = PickStage::Single;
+            ImGui::CloseCurrentPopup();
+            ImGui::CloseCurrentPopup(); // Also close modal
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##grd", ImVec2(80,0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}

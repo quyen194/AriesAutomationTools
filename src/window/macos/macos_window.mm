@@ -240,6 +240,18 @@ private:
         return buf;
     }
 
+    std::vector<uint32_t> CaptureFullScreen(int& out_w, int& out_h) override {
+        out_w = 0; out_h = 0;
+        CGDirectDisplayID display = CGMainDisplayID();
+        CGRect bounds = CGDisplayBounds(display);
+        int sw = (int)bounds.size.width;
+        int sh = (int)bounds.size.height;
+        PixelBuffer buf = CaptureRegion((int)bounds.origin.x, (int)bounds.origin.y, sw, sh);
+        if (buf.Empty()) return {};
+        out_w = sw; out_h = sh;
+        return buf.pixels;
+    }
+
     std::mutex m_mutex;          // schedulers + trigger thread may call concurrently
     id m_shareable = nil;        // cached SCShareableContent (macOS 14+ only)
 };

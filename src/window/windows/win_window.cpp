@@ -113,6 +113,50 @@ public:
                 (uint32_t)GetBValue(c);
     }
 
+    std::vector<uint32_t> CaptureFullScreen(int& out_w, int& out_h) override {
+        out_w = 0; out_h = 0;
+        if (!m_dc) return {};
+        // Use virtual screen metrics to handle multi-monitor setups
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (vw <= 0 || vh <= 0) return {};
+
+        HDC mem = CreateCompatibleDC(m_dc);
+        if (!mem) return {};
+        HBITMAP bmp = CreateCompatibleBitmap(m_dc, vw, vh);
+        if (!bmp) { DeleteDC(mem); return {}; }
+
+        HGDIOBJ old = SelectObject(mem, bmp);
+        BitBlt(mem, 0, 0, vw, vh, m_dc, vx, vy, SRCCOPY);
+
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth       = vw;
+        bi.bmiHeader.biHeight      = -vh;
+        bi.bmiHeader.biPlanes      = 1;
+        bi.bmiHeader.biBitCount    = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+
+        std::vector<uint32_t> pixels;
+        std::vector<uint8_t> raw((size_t)vw * vh * 4);
+        if (GetDIBits(mem, bmp, 0, vh, raw.data(), &bi, DIB_RGB_COLORS) == vh) {
+            pixels.resize((size_t)vw * vh);
+            for (size_t i = 0; i < pixels.size(); ++i) {
+                pixels[i] = ((uint32_t)raw[i*4+2] << 16) |
+                            ((uint32_t)raw[i*4+1] <<  8) |
+                             (uint32_t)raw[i*4+0];
+            }
+            out_w = vw; out_h = vh;
+        }
+
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        return pixels;
+    }
+
     PixelBuffer CaptureRegion(int x, int y, int w, int h) override {
         PixelBuffer buf;
         if (w <= 0 || h <= 0 || !m_dc) return buf;

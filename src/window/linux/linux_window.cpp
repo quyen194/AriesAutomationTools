@@ -157,6 +157,18 @@ public:
         return buf;
     }
 
+    std::vector<uint32_t> CaptureFullScreen(int& out_w, int& out_h) override {
+        out_w = 0; out_h = 0;
+        if (!m_dpy) return {};
+        Screen* scr = DefaultScreenOfDisplay(m_dpy);
+        int sw = WidthOfScreen(scr);
+        int sh = HeightOfScreen(scr);
+        PixelBuffer buf = CaptureRegion(0, 0, sw, sh);
+        if (buf.Empty()) return {};
+        out_w = sw; out_h = sh;
+        return buf.pixels;
+    }
+
 private:
     static uint32_t PixelToRGB(XImage* img, unsigned long px) {
         // Shift each masked channel down to its low byte (handles any visual)

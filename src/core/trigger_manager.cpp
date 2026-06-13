@@ -52,9 +52,20 @@ void TriggerManager::Run() {
                     if (m_cb) m_cb(wf.id);
 
             } else if (trig.type == StartTrigger::Type::Pixel) {
-                if (m_pixel) {
-                    uint32_t c = m_pixel->GetPixelRGB(trig.pixel_x, trig.pixel_y);
-                    if (ColorsMatch(c, trig.pixel_color, trig.pixel_tolerance))
+                if (m_pixel && !trig.pixel_sample.empty() &&
+                    trig.pixel_sample_w > 0 && trig.pixel_sample_h > 0) {
+                    // Range-based pixel trigger: compare region against stored sample
+                    int x1 = std::min(trig.pixel_x1, trig.pixel_x2);
+                    int y1 = std::min(trig.pixel_y1, trig.pixel_y2);
+                    PixelBuffer sample;
+                    sample.width  = trig.pixel_sample_w;
+                    sample.height = trig.pixel_sample_h;
+                    sample.pixels = trig.pixel_sample;
+                    PixelBuffer cur = m_pixel->CaptureRegion(x1, y1,
+                                                              trig.pixel_sample_w,
+                                                              trig.pixel_sample_h);
+                    if (BuffersMatchPercent(sample, cur, trig.pixel_tolerance)
+                            >= trig.pixel_match_percent)
                         if (m_cb) m_cb(wf.id);
                 }
             }
@@ -67,7 +78,7 @@ void TriggerManager::Run() {
 
 int TriggerManager::ParseCronField(const std::string& field, int cur, int minV, int maxV) {
     (void)minV; (void)maxV;
-    if (field == "*") return 0; // always match
+    if (field == "*") return 0;
     if (field.substr(0, 2) == "*/") {
         int step = std::stoi(field.substr(2));
         return (step > 0 && cur % step == 0) ? 0 : 1;
@@ -76,7 +87,6 @@ int TriggerManager::ParseCronField(const std::string& field, int cur, int minV, 
 }
 
 bool TriggerManager::CronMatches(const std::string& expr, const std::tm& t) const {
-    // Parse 5-field cron: "min hour dom mon dow"
     std::istringstream ss(expr);
     std::string fields[5];
     for (int i = 0; i < 5; ++i) { if (!(ss >> fields[i])) fields[i] = "*"; }
