@@ -122,8 +122,10 @@ void RecordEngine::Stop() {
 void RecordEngine::InstallHooks() {
 #if defined(_WIN32)
     s_instance   = this;
-    m_mouseHook  = SetWindowsHookExA(WH_MOUSE_LL,   MouseProc,    nullptr, 0);
-    m_keyHook    = SetWindowsHookExA(WH_KEYBOARD_LL, KeyboardProc, nullptr, 0);
+    if (!IsDebuggerPresent()) {
+        m_mouseHook  = SetWindowsHookExA(WH_MOUSE_LL,   MouseProc,    nullptr, 0);
+        m_keyHook    = SetWindowsHookExA(WH_KEYBOARD_LL, KeyboardProc, nullptr, 0);
+    }
 #endif
     // Linux: XRecord / macOS: CGEventTap would go here (future impl)
 }

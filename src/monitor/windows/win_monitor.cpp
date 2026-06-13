@@ -39,8 +39,12 @@ public:
         m_ready.store(false, std::memory_order_relaxed);
         m_thread = std::thread([this]() {
             m_threadId.store(GetCurrentThreadId(), std::memory_order_release);
-            HHOOK kbHook = SetWindowsHookEx(WH_KEYBOARD_LL, KbLowLevelProc, nullptr, 0);
-            HHOOK msHook = SetWindowsHookEx(WH_MOUSE_LL,    MsLowLevelProc, nullptr, 0);
+            HHOOK kbHook = nullptr;
+            HHOOK msHook = nullptr;
+            if (!IsDebuggerPresent()) {
+                kbHook = SetWindowsHookEx(WH_KEYBOARD_LL, KbLowLevelProc, nullptr, 0);
+                msHook = SetWindowsHookEx(WH_MOUSE_LL,    MsLowLevelProc, nullptr, 0);
+            }
             m_ready.store(true, std::memory_order_release);
             MSG msg;
             while (GetMessage(&msg, nullptr, 0, 0) > 0)
