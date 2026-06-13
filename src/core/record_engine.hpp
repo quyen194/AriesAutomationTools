@@ -1,12 +1,14 @@
 #pragma once
 #include "workflow.hpp"
-#include <vector>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <queue>
 #include <string>
 #include <thread>
+#include <vector>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -57,11 +59,32 @@ private:
     void RemoveHooks();
 
 #if defined(_WIN32)
+    // Raw event: copied from MSLLHOOKSTRUCT/KBDLLHOOKSTRUCT in < 1µs, no Win32 calls
+    struct RawHookEvent {
+        enum class Source { Mouse, Keyboard } source;
+        UINT     wParam       = 0;
+        int      x = 0, y = 0;
+        DWORD    mouseData    = 0;  // WM_MOUSEWHEEL: HIWORD = signed delta
+        DWORD    vkCode       = 0;
+        uint64_t timestamp_ms = 0;
+    };
+
     static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-    void*                m_mouseHook     = nullptr;
-    void*                m_keyHook       = nullptr;
-    std::atomic<DWORD>   m_hookThreadId  {0};
-    static RecordEngine* s_instance;
+
+    void*                         m_mouseHook      = nullptr;
+    void*                         m_keyHook        = nullptr;
+    std::atomic<DWORD>            m_hookThreadId   {0};
+    static RecordEngine*          s_instance;
+
+    // Producer-consumer: hook proc enqueues; consumer thread processes
+    std::queue<RawHookEvent>      m_rawQueue;
+    std::mutex                    m_rawMutex;
+    std::condition_variable       m_rawCv;
+    std::atomic<bool>             m_consumerRunning{false};
+    std::thread                   m_consumerThread;
+
+    void ConsumerLoop();
+    void ProcessRawEvent(const RawHookEvent& rev);
 #endif
 };
