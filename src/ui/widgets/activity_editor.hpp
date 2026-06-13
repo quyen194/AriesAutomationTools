@@ -100,6 +100,9 @@ private:
     // ── "No window selected" guard dialog state ───────────────────────────────
     bool m_showNoWindowDlg = false;
 
+    // ── "Add to specific body list" target (nullptr = add to wf.activities) ──
+    std::vector<Activity>* m_addTargetList = nullptr;
+
     // ── Private methods ───────────────────────────────────────────────────────
     void RenderPickOverlay();
     void RenderSnipOverlay(Workflow& wf);
@@ -107,6 +110,8 @@ private:
     void RenderModal(Workflow& wf);
     void RenderActivityFields(ActivityData& data, const Workflow& wf);
 
+    // Returns the primary editable body list of a block-type activity (nullptr if not a block)
+    static std::vector<Activity>* GetPrimaryBody(Activity& a);
     // Returns the block-type color (0 if not a block type)
     static uint32_t BlockColor(const ActivityData& d);
     static std::string BlockName(const Activity& a);

@@ -243,7 +243,16 @@ bool AppUI::RequestQuit() {
         m_shouldQuit = true;
         return true;
     }
-    // Show confirmation modal next frame
+    // Bring the window to front so the user can see the confirmation dialog.
+    // This matters when the request came from the tray context menu while the
+    // window was hidden or behind other windows.
+    if (m_sdlWindow) {
+        if (!m_windowVisible) {
+            SDL_ShowWindow(m_sdlWindow);
+            m_windowVisible = true;
+        }
+        SDL_RaiseWindow(m_sdlWindow);
+    }
     m_quitRequested = true;
     return false;
 }

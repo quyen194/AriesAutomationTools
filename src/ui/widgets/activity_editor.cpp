@@ -182,6 +182,23 @@ std::string ActivityEditorWidget::BlockName(const Activity& a) {
     }, a.data);
 }
 
+// Returns the primary (first/only) body list of a block-type activity.
+// Loop → body; If → then_body; Switch → default_body; PixelRange → match_body.
+std::vector<Activity>* ActivityEditorWidget::GetPrimaryBody(Activity& a) {
+    return std::visit([](auto&& v) -> std::vector<Activity>* {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, LoopActivity>)
+            return v.body ? v.body.get() : nullptr;
+        else if constexpr (std::is_same_v<T, IfActivity>)
+            return v.then_body ? v.then_body.get() : nullptr;
+        else if constexpr (std::is_same_v<T, SwitchActivity>)
+            return v.default_body ? v.default_body.get() : nullptr;
+        else if constexpr (std::is_same_v<T, PixelRangeCheckActivity>)
+            return v.match_body ? v.match_body.get() : nullptr;
+        else return nullptr;
+    }, a.data);
+}
+
 // Auto-assigns a block name if empty (e.g. "Loop 2")
 static void AutoNameBlock(Activity& a, const std::vector<Activity>& allActs,
                           const std::string& prefix, int variantIdx) {
@@ -600,13 +617,55 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
         // ── BlockEnd row ──────────────────────────────────────────────────────
         if (fn.kind == FlatNode::Kind::BlockEnd) {
+            // Find the block's Activity* from flat nodes (linear, list is small)
+            Activity* blockAct = nullptr;
+            for (auto& fn2 : m_flatNodes)
+                if (fn2.kind == FlatNode::Kind::BlockHeader && fn2.blockId == fn.blockId && fn2.act)
+                    { blockAct = fn2.act; break; }
+
+            std::string endLabel = "-- end " + (fn.blockName.empty() ? fn.blockId.substr(0,8) : fn.blockName) + " --";
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f,0.55f,0.55f,1.f));
-            std::string label = "-- end " + (fn.blockName.empty() ? fn.blockId.substr(0,8) : fn.blockName) + " --";
-            ImGui::TextUnformatted(label.c_str());
+            ImGui::TextUnformatted(endLabel.c_str());
             ImGui::PopStyleColor();
             if (ImGui::IsItemClicked()) {
                 m_expandedIds.erase(fn.blockId);
             }
+
+            // Drag-drop target: drop onto BlockEnd → append to block's primary body
+            if (blockAct && ImGui::BeginDragDropTarget()) {
+                struct ActDragPayload { std::vector<Activity>* srcList; int srcIdx; };
+                if (auto* p = ImGui::AcceptDragDropPayload("ACT_TREE")) {
+                    auto& payload = *(const ActDragPayload*)p->Data;
+                    auto* body = GetPrimaryBody(*blockAct);
+                    if (body) {
+                        Activity moved = (*payload.srcList)[payload.srcIdx];
+                        payload.srcList->erase(payload.srcList->begin() + payload.srcIdx);
+                        body->push_back(std::move(moved));
+                        if (OnChanged) OnChanged();
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            // "[+]" button: add a new child activity to the block's primary body
+            if (blockAct) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f,0.85f,0.4f,1.f));
+                char addLbl[32]; snprintf(addLbl, sizeof(addLbl), "[+]##end%d", ni);
+                if (ImGui::SmallButton(addLbl)) {
+                    m_addTargetList    = GetPrimaryBody(*blockAct);
+                    m_expandedIds.insert(blockAct->id);
+                    m_draft            = Activity{GenId(), true, MouseClickActivity{}};
+                    m_editIdx          = -1;
+                    m_openModal        = true;
+                    m_keyCaptureActive = false;
+                    m_scrollCapture    = false;
+                    m_pickStage        = PickStage::None;
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add child activity to this block");
+            }
+
             ImGui::PopID();
             continue;
         }
@@ -697,21 +756,43 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             ImGui::Text("Move: %s", s.c_str());
             ImGui::EndDragDropSource();
         }
-        // Drag-drop target
+        // Drag-drop target (same list = reorder; different list = cross-body move)
         if (ImGui::BeginDragDropTarget()) {
             struct ActDragPayload { std::vector<Activity>* srcList; int srcIdx; };
             if (auto* p = ImGui::AcceptDragDropPayload("ACT_TREE")) {
                 auto& payload = *(const ActDragPayload*)p->Data;
                 auto* srcList = payload.srcList;
-                auto* dstList = fn.parentList;
                 int src = payload.srcIdx;
-                int dst = fn.indexInParent;
-                if (srcList == dstList && src != dst) {
-                    Activity moved = (*srcList)[src];
-                    srcList->erase(srcList->begin() + src);
-                    int insertDst = (src < dst) ? dst - 1 : dst;
-                    dstList->insert(dstList->begin() + insertDst, std::move(moved));
-                    if (OnChanged) OnChanged();
+
+                if (fn.kind == FlatNode::Kind::BlockHeader) {
+                    // Drop onto a block header → insert at front of its primary body
+                    auto* body = GetPrimaryBody(a);
+                    if (body && !(srcList == body && src == 0)) {
+                        Activity moved = (*srcList)[src];
+                        srcList->erase(srcList->begin() + src);
+                        body->insert(body->begin(), std::move(moved));
+                        m_expandedIds.insert(a.id);
+                        if (OnChanged) OnChanged();
+                    }
+                } else {
+                    // Drop onto a normal row → reorder within or across lists
+                    auto* dstList = fn.parentList;
+                    int dst = fn.indexInParent;
+                    if (srcList == dstList) {
+                        if (src != dst) {
+                            Activity moved = (*srcList)[src];
+                            srcList->erase(srcList->begin() + src);
+                            int insertDst = (src < dst) ? dst - 1 : dst;
+                            dstList->insert(dstList->begin() + insertDst, std::move(moved));
+                            if (OnChanged) OnChanged();
+                        }
+                    } else {
+                        // Cross-list: erase from src, insert before dst in dstList
+                        Activity moved = (*srcList)[src];
+                        srcList->erase(srcList->begin() + src);
+                        dstList->insert(dstList->begin() + dst, std::move(moved));
+                        if (OnChanged) OnChanged();
+                    }
                 }
             }
             ImGui::EndDragDropTarget();
@@ -719,6 +800,19 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
         // Right-click context menu
         if (ImGui::BeginPopupContextItem("##ctx")) {
+            if (fn.kind == FlatNode::Kind::BlockHeader) {
+                if (ImGui::MenuItem("Add child activity")) {
+                    m_addTargetList    = GetPrimaryBody(a);
+                    m_expandedIds.insert(a.id);
+                    m_draft            = Activity{GenId(), true, MouseClickActivity{}};
+                    m_editIdx          = -1;
+                    m_openModal        = true;
+                    m_keyCaptureActive = false;
+                    m_scrollCapture    = false;
+                    m_pickStage        = PickStage::None;
+                }
+                ImGui::Separator();
+            }
             if (ImGui::MenuItem("Edit")) {
                 m_draft            = a;
                 m_editIdx          = fn.indexInParent;
@@ -1096,7 +1190,11 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
 
     ImGui::Separator();
     if (ImGui::Button("OK", ImVec2(100,0))) {
-        if (m_editIdx < 0) {
+        if (m_addTargetList) {
+            // Add to a specific block body (set by "[+]" or "Add child activity")
+            m_addTargetList->push_back(m_draft);
+            m_addTargetList = nullptr;
+        } else if (m_editIdx < 0) {
             wf.activities.push_back(m_draft);
         } else {
             // Find by activity ID — works for both top-level and nested activities
@@ -1114,6 +1212,7 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(100,0))) {
+        m_addTargetList    = nullptr;
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
         ImGui::CloseCurrentPopup();
