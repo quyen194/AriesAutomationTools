@@ -119,6 +119,7 @@ void Scheduler::Run() {
                         std::unordered_set<std::string>& calledIds,
                         bool updateIndex) -> FlowSignal {
         bool skipIteration = false;
+        int  jumpTarget    = -1;  // set by JumpActivity; applied after std::visit
 
         for (int i = 0; i < (int)acts.size() && !IsStopped(); ++i) {
             if (!acts[i].enabled) continue;
@@ -355,10 +356,20 @@ void Scheduler::Run() {
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
                     }
                     SleepInterruptible(v.delay_ms);
+
+                } else if constexpr (std::is_same_v<T, JumpActivity>) {
+                    SleepInterruptible(v.delay_ms);
+                    for (int t = 0; t < (int)acts.size(); ++t) {
+                        if (acts[t].id == v.target_id) {
+                            jumpTarget = t - 1; // -1 because the for loop does ++i
+                            break;
+                        }
+                    }
                 }
 
             }, acts[i].data);
 
+            if (jumpTarget >= 0) { i = jumpTarget; jumpTarget = -1; }
             if (skipIteration) break;
         }
 

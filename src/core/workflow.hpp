@@ -187,6 +187,12 @@ struct SwitchActivity {
     int delay_ms = 0;
 };
 
+// Index 16 — jump: transfer control to another activity in the same body
+struct JumpActivity {
+    std::string target_id;   // id of the activity to jump to
+    int delay_ms = 0;
+};
+
 // ── ActivityData variant ──────────────────────────────────────────────────────
 
 using ActivityData = std::variant<
@@ -205,7 +211,8 @@ using ActivityData = std::variant<
     SetVariableActivity,      // 12
     LoopActivity,             // 13
     IfActivity,               // 14
-    SwitchActivity            // 15
+    SwitchActivity,           // 15
+    JumpActivity              // 16
 >;
 
 struct Activity {

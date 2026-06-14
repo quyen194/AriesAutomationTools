@@ -351,6 +351,11 @@ static json SerializeActivity(const Activity& a) {
             j["cases"]         = cases;
             j["default"]       = SerializeActivityList(v.default_body ? *v.default_body : std::vector<Activity>{});
             j["delay_after_ms"]= v.delay_ms;
+
+        } else if constexpr (std::is_same_v<T, JumpActivity>) {
+            j["type"]          = "jump";
+            j["target_id"]     = v.target_id;
+            j["delay_after_ms"]= v.delay_ms;
         }
     }, a.data);
 
@@ -525,6 +530,12 @@ static Activity DeserializeActivity(const json& j) {
         v.default_body = std::make_shared<std::vector<Activity>>(
                              DeserializeActivityList(j.value("default", json::array())));
         v.delay_ms = j.value("delay_after_ms", 0);
+        a.data = v;
+
+    } else if (type == "jump") {
+        JumpActivity v;
+        v.target_id = j.value("target_id", "");
+        v.delay_ms  = j.value("delay_after_ms", 0);
         a.data = v;
 
     } else {

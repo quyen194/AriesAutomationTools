@@ -82,11 +82,11 @@ static const char* kTypes[] = {
     // 7 = pixel_check (hidden — not in this list)
     "pixel_range_check",     // displayed index 7 → variant index 8
     "run_workflow","system_action",
-    "run_activity","set_variable","loop","if","switch"
+    "run_activity","set_variable","loop","if","switch","jump"
 };
 // Map displayed combo index → variant index
 static const int kTypeToVariantIdx[] = {
-    0,1,2,3,4,5,6, 8, 9,10, 11,12,13,14,15
+    0,1,2,3,4,5,6, 8, 9,10, 11,12,13,14,15,16
 };
 static const int kNumTypes = (int)(sizeof(kTypes)/sizeof(kTypes[0]));
 
@@ -108,6 +108,7 @@ static int VariantToDisplayIdx(const ActivityData& d) {
     if (std::holds_alternative<LoopActivity>(d))             return 12;
     if (std::holds_alternative<IfActivity>(d))               return 13;
     if (std::holds_alternative<SwitchActivity>(d))           return 14;
+    if (std::holds_alternative<JumpActivity>(d))             return 15;
     return -1;
 }
 
@@ -137,6 +138,7 @@ static ActivityData DefaultData(int displayIdx) {
         case 15: { SwitchActivity v;
                    v.default_body = std::make_shared<std::vector<Activity>>();
                    return v; }
+        case 16: return JumpActivity{};
         default: return WaitActivity{};
     }
 }
@@ -306,6 +308,9 @@ static std::string ActivitySummary(const Activity& a) {
             snprintf(buf,sizeof(buf),"%s  switch %s  [%d cases]",
                 v.name.empty()?"switch":v.name.c_str(),
                 v.var_name.c_str(),(int)v.cases.size());
+        } else if constexpr (std::is_same_v<T,JumpActivity>) {
+            snprintf(buf,sizeof(buf),"jump -> %.32s",
+                v.target_id.empty() ? "(none)" : v.target_id.substr(0,24).c_str());
         }
         return buf;
     }, a.data);
@@ -857,6 +862,25 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 m_pendingConfirmOpen = true;
             }
             ImGui::EndPopup();
+        }
+
+        // [+] button: always visible on block headers to add a child activity
+        if (fn.kind == FlatNode::Kind::BlockHeader) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f,0.85f,0.4f,1.f));
+            char addHdrLbl[32]; snprintf(addHdrLbl, sizeof(addHdrLbl), "[+]##hdr%d", ni);
+            if (ImGui::SmallButton(addHdrLbl)) {
+                m_addTargetList    = GetPrimaryBody(a);
+                m_expandedIds.insert(a.id);
+                m_draft            = Activity{GenId(), true, MouseClickActivity{}};
+                m_editIdx          = -1;
+                m_openModal        = true;
+                m_keyCaptureActive = false;
+                m_scrollCapture    = false;
+                m_pickStage        = PickStage::None;
+            }
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add child activity to this block");
         }
 
         // Inline action buttons (visible when selected)
@@ -1532,7 +1556,10 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             strncpy(iterBuf, v.iter_var.c_str(), sizeof(iterBuf)-1);
             if (ImGui::InputText("Write iteration to var##lp", iterBuf, sizeof(iterBuf)))
                 v.iter_var = iterBuf;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave empty to not track iteration");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Variable name to store the current iteration number (1-based).\n"
+                                  "E.g. set to \"i\" and use $i in other activities.\n"
+                                  "Leave empty to skip.");
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##lp", &v.delay_ms);
             ImGui::TextDisabled("Children: edit inline in the activity list.");
 
@@ -1592,6 +1619,32 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::Separator();
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##sw", &v.delay_ms);
             ImGui::TextDisabled("Case bodies: edit inline in the activity list.");
+
+        } else if constexpr (std::is_same_v<T,JumpActivity>) {
+            ImGui::Text("Jump to activity:");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##actfilter_jmp", m_actFilterBuf, sizeof(m_actFilterBuf));
+            ImGui::BeginChild("##actlist_jmp", ImVec2(0,130), true);
+            std::string filterLow(m_actFilterBuf);
+            for (auto& c : filterLow) c = (char)std::tolower((unsigned char)c);
+            for (auto& fn : m_flatNodes) {
+                if (!fn.act || fn.kind == FlatNode::Kind::BlockEnd) continue;
+                std::string summary = ActivitySummary(*fn.act);
+                std::string sumLow  = summary;
+                for (auto& c : sumLow) c = (char)std::tolower((unsigned char)c);
+                if (!filterLow.empty() && sumLow.find(filterLow)==std::string::npos) continue;
+                bool sel = (v.target_id == fn.act->id);
+                char lbl[256]; snprintf(lbl,sizeof(lbl),"%s##jmp%s",summary.c_str(),fn.act->id.c_str());
+                if (ImGui::Selectable(lbl, sel)) v.target_id = fn.act->id;
+            }
+            ImGui::EndChild();
+            if (!v.target_id.empty())
+                ImGui::TextDisabled("ID: %.24s", v.target_id.c_str());
+            else
+                ImGui::TextColored(ImVec4(1,0.5f,0.3f,1), "No target selected");
+            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##jmp", &v.delay_ms);
+            v.delay_ms = std::max(0, v.delay_ms);
+            ImGui::TextDisabled("Jumps within the same activity list (body/branch/root).");
         }
 
     }, data);
