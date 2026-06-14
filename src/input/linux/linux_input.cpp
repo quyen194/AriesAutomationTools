@@ -29,6 +29,15 @@ public:
         XFlush(m_display);
     }
 
+    void GetMousePos(int& x, int& y) override {
+        Window root, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        XQueryPointer(m_display, DefaultRootWindow(m_display),
+                      &root, &child, &rx, &ry, &wx, &wy, &mask);
+        x = rx; y = ry;
+    }
+
     void MouseClick(MouseButton btn, int x, int y, bool double_click) override {
         MouseMove(x, y);
         doClick(BtnNum(btn));

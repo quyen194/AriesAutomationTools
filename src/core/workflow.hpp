@@ -49,6 +49,8 @@ struct MouseMoveActivity {
     PositionMode pos_mode = PositionMode::Absolute;
     int x = 0, y = 0;
     int delay_ms = 100, delay_rand_ms = 0;
+    bool smooth_move        = false;
+    int  smooth_duration_ms = 300;
 };
 
 struct MouseClickActivity {

@@ -30,6 +30,12 @@ public:
         SetCursorPos(x, y);
     }
 
+    void GetMousePos(int& x, int& y) override {
+        POINT pt{};
+        GetCursorPos(&pt);
+        x = pt.x; y = pt.y;
+    }
+
     void MouseClick(MouseButton btn, int x, int y, bool double_click) override {
         SetCursorPos(x, y);
         doClick(btn);

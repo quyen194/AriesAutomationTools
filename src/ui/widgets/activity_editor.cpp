@@ -255,8 +255,9 @@ static std::string ActivitySummary(const Activity& a) {
         using T = std::decay_t<decltype(v)>;
         char buf[160]{};
         if constexpr (std::is_same_v<T,MouseMoveActivity>)
-            snprintf(buf,sizeof(buf),"mouse_move %s (%d,%d) +%dms",
-                v.pos_mode==PositionMode::Absolute?"abs":"rel",v.x,v.y,v.delay_ms);
+            snprintf(buf,sizeof(buf),"mouse_move %s (%d,%d)%s +%dms",
+                v.pos_mode==PositionMode::Absolute?"abs":"rel",v.x,v.y,
+                v.smooth_move?" smooth":"",v.delay_ms);
         else if constexpr (std::is_same_v<T,MouseClickActivity>)
             snprintf(buf,sizeof(buf),"mouse_click %s %s (%d,%d) +%dms",
                 v.button==MouseButton::Left?"left":v.button==MouseButton::Right?"right":"mid",
@@ -1492,6 +1493,12 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
         if constexpr (std::is_same_v<T,MouseMoveActivity>) {
             posMode(v.pos_mode);
             xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
+            ImGui::Checkbox("Smooth move", &v.smooth_move);
+            if (v.smooth_move) {
+                ImGui::SetNextItemWidth(120);
+                ImGui::InputInt("Duration ms##smooth", &v.smooth_duration_ms);
+                if (v.smooth_duration_ms < 10) v.smooth_duration_ms = 10;
+            }
             delayFields(v.delay_ms, v.delay_rand_ms);
 
         } else if constexpr (std::is_same_v<T,MouseClickActivity>) {

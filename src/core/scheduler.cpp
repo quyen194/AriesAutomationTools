@@ -136,7 +136,19 @@ void Scheduler::Run() {
                 if constexpr (std::is_same_v<T, MouseMoveActivity>) {
                     if (!g_input) return;
                     auto [ax, ay] = resolveCoords(v.pos_mode, v.x, v.y);
-                    g_input->MouseMove(ax, ay);
+                    if (v.smooth_move && v.smooth_duration_ms > 0) {
+                        int sx, sy;
+                        g_input->GetMousePos(sx, sy);
+                        const int steps = std::max(1, v.smooth_duration_ms / 10);
+                        for (int s = 1; s <= steps && !IsStopped(); ++s) {
+                            int cx = sx + (ax - sx) * s / steps;
+                            int cy = sy + (ay - sy) * s / steps;
+                            g_input->MouseMove(cx, cy);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        }
+                    } else {
+                        g_input->MouseMove(ax, ay);
+                    }
                     SleepInterruptible(v.delay_ms + randExtra(v.delay_rand_ms));
 
                 } else if constexpr (std::is_same_v<T, MouseClickActivity>) {

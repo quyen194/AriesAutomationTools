@@ -44,6 +44,13 @@ public:
         CFRelease(ev);
     }
 
+    void GetMousePos(int& x, int& y) override {
+        CGEventRef ev = CGEventCreate(nullptr);
+        CGPoint loc = CGEventGetLocation(ev);
+        CFRelease(ev);
+        x = (int)loc.x; y = (int)loc.y;
+    }
+
     void MouseClick(MouseButton btn, int x, int y, bool double_click) override {
         CGPoint pt{(CGFloat)x, (CGFloat)y};
         auto post = [&](CGEventType t) {

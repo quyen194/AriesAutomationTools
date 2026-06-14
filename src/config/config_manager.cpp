@@ -222,6 +222,8 @@ static json SerializeActivity(const Activity& a) {
             j["x"] = v.x; j["y"]  = v.y;
             j["delay_after_ms"]    = v.delay_ms;
             j["delay_random_range_ms"] = v.delay_rand_ms;
+            j["smooth_move"]         = v.smooth_move;
+            j["smooth_duration_ms"]  = v.smooth_duration_ms;
 
         } else if constexpr (std::is_same_v<T, MouseClickActivity>) {
             j["type"]              = "mouse_click";
@@ -371,10 +373,12 @@ static Activity DeserializeActivity(const json& j) {
 
     if (type == "mouse_move") {
         MouseMoveActivity v;
-        v.pos_mode     = StrToPosMode(j.value("position_mode", "absolute"));
+        v.pos_mode          = StrToPosMode(j.value("position_mode", "absolute"));
         v.x = j.value("x", 0); v.y = j.value("y", 0);
-        v.delay_ms     = j.value("delay_after_ms", 100);
-        v.delay_rand_ms= j.value("delay_random_range_ms", 0);
+        v.delay_ms          = j.value("delay_after_ms", 100);
+        v.delay_rand_ms     = j.value("delay_random_range_ms", 0);
+        v.smooth_move       = j.value("smooth_move", false);
+        v.smooth_duration_ms= j.value("smooth_duration_ms", 300);
         a.data = v;
 
     } else if (type == "mouse_click") {
