@@ -9,9 +9,12 @@
 struct SDL_Window;
 struct SDL_Renderer;
 struct SDL_Texture;
+struct SDL_Cursor;
 
 struct ActivityEditorWidget {
     std::function<void()> OnChanged;
+
+    ~ActivityEditorWidget();
 
     void SetWorkflows(const std::vector<Workflow>* wfs) { m_workflows = wfs; }
     void SetSDLContext(SDL_Window* window, SDL_Renderer* renderer) {
@@ -86,6 +89,8 @@ private:
     SDL_Renderer* m_sdlRenderer = nullptr;
     int m_origWindowX = 0, m_origWindowY = 0;
     int m_origWindowW = 0, m_origWindowH = 0; // 0 = not in fullscreen mode
+    SDL_Cursor*   m_crosshairCursor   = nullptr;
+    SDL_Cursor*   m_origCursor        = nullptr;
 
     void EnterFullscreenMode();
     void ExitFullscreenMode();
@@ -99,6 +104,10 @@ private:
     int          m_snipX2     = 0, m_snipY2     = 0;
     bool         m_snipDragging = false;
     SDL_Texture* m_snipTexture = nullptr;
+
+    // ── Sample image preview texture ──────────────────────────────────────────
+    SDL_Texture* m_samplePreviewTex  = nullptr;
+    size_t       m_samplePreviewHash = 0;
 
     // ── "No window selected" guard dialog state ───────────────────────────────
     bool m_showNoWindowDlg = false;

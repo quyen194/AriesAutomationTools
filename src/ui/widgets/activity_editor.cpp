@@ -14,6 +14,13 @@
 #include <iomanip>
 #include <cmath>
 
+// ── Destructor ────────────────────────────────────────────────────────────────
+ActivityEditorWidget::~ActivityEditorWidget() {
+    if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
+    if (m_snipTexture)      { SDL_DestroyTexture(m_snipTexture);      m_snipTexture = nullptr; }
+    if (m_crosshairCursor)  { SDL_FreeCursor(m_crosshairCursor);      m_crosshairCursor = nullptr; }
+}
+
 // ── UUID helper ───────────────────────────────────────────────────────────────
 static std::string GenId() {
     static std::mt19937 rng{std::random_device{}()};
@@ -329,6 +336,10 @@ void ActivityEditorWidget::EnterFullscreenMode() {
         SDL_SetWindowPosition(m_sdlWindow, 0, 0);
         SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
     }
+    m_origCursor = SDL_GetCursor();
+    if (!m_crosshairCursor)
+        m_crosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+    SDL_SetCursor(m_crosshairCursor);
 }
 
 void ActivityEditorWidget::ExitFullscreenMode() {
@@ -338,6 +349,7 @@ void ActivityEditorWidget::ExitFullscreenMode() {
     SDL_SetWindowPosition(m_sdlWindow, m_origWindowX, m_origWindowY);
     SDL_SetWindowSize(m_sdlWindow, m_origWindowW, m_origWindowH);
     m_origWindowW = 0;
+    if (m_origCursor) { SDL_SetCursor(m_origCursor); m_origCursor = nullptr; }
 }
 
 // ── FlatNode pre-pass ─────────────────────────────────────────────────────────
@@ -1102,20 +1114,45 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
         int y2 = std::max(m_snipY1, m_snipY2);
 
         if (m_snipDragging && m_snipTexture && m_snipW > 0 && m_snipH > 0) {
-            // Draw selected region at full brightness
+            // Selected region at full brightness
             float u1 = (float)x1 / m_snipW, v1 = (float)y1 / m_snipH;
             float u2 = (float)x2 / m_snipW, v2 = (float)y2 / m_snipH;
             dl->AddImage((ImTextureID)(intptr_t)m_snipTexture,
                          ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
                          ImVec2(u1,v1), ImVec2(u2,v2), IM_COL32(255,255,255,255));
-            // White border
-            dl->AddRect(ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
-                        IM_COL32(255,255,255,255), 0, 0, 2.0f);
+
+            // Dashed border around selection
+            auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
+                const float dashLen = 8.f, gapLen = 4.f;
+                float dx = p2.x - p1.x, dy = p2.y - p1.y;
+                float len = sqrtf(dx*dx + dy*dy);
+                if (len < 1.f) return;
+                float nx = dx/len, ny = dy/len;
+                float pos = 0.f; bool on = true;
+                while (pos < len) {
+                    float end = std::min(pos + (on ? dashLen : gapLen), len);
+                    if (on)
+                        dl->AddLine(ImVec2(p1.x + nx*pos, p1.y + ny*pos),
+                                    ImVec2(p1.x + nx*end, p1.y + ny*end),
+                                    IM_COL32(255,255,255,220), 2.f);
+                    pos = end; on = !on;
+                }
+            };
+            drawDashed(ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y1));
+            drawDashed(ImVec2((float)x2,(float)y1), ImVec2((float)x2,(float)y2));
+            drawDashed(ImVec2((float)x2,(float)y2), ImVec2((float)x1,(float)y2));
+            drawDashed(ImVec2((float)x1,(float)y2), ImVec2((float)x1,(float)y1));
+
             // Size label
             char sizeLabel[64];
             snprintf(sizeLabel, sizeof(sizeLabel), "%d x %d", x2-x1, y2-y1);
             dl->AddText(ImVec2((float)x1+4, (float)y2+4),
                         IM_COL32(255,255,255,255), sizeLabel);
+        } else {
+            // Crosshair guide lines before dragging starts
+            float mx = mp.x, my = mp.y;
+            dl->AddLine(ImVec2(0, my), ImVec2(sz.x, my), IM_COL32(255,255,255,80), 1.f);
+            dl->AddLine(ImVec2(mx, 0), ImVec2(mx, sz.y), IM_COL32(255,255,255,80), 1.f);
         }
 
         // Instruction text
@@ -1531,7 +1568,41 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             } else {
                 ImGui::Text("Sample: %d x %d (%d px)", v.sample_w, v.sample_h, v.sample_w*v.sample_h);
                 ImGui::SameLine();
-                if (ImGui::Button("Clear##prc")) { v.sample.clear(); v.sample_w = v.sample_h = 0; }
+                if (ImGui::Button("Clear##prc")) {
+                    v.sample.clear(); v.sample_w = v.sample_h = 0;
+                    if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
+                    m_samplePreviewHash = 0;
+                }
+
+                // Rebuild preview texture when sample changes
+                if (m_sdlRenderer && v.sample_w > 0 && v.sample_h > 0) {
+                    size_t hash = (size_t)v.sample_w * 100003u
+                                + (size_t)v.sample_h * 10007u
+                                + v.sample.size();
+                    if (hash != m_samplePreviewHash || !m_samplePreviewTex) {
+                        if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
+                        SDL_Texture* tex = SDL_CreateTexture(m_sdlRenderer,
+                            SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                            v.sample_w, v.sample_h);
+                        if (tex) {
+                            std::vector<uint32_t> argb(v.sample.size());
+                            for (size_t i = 0; i < v.sample.size(); ++i)
+                                argb[i] = 0xFF000000u | v.sample[i];
+                            SDL_UpdateTexture(tex, nullptr, argb.data(), v.sample_w * 4);
+                            m_samplePreviewTex = tex;
+                            m_samplePreviewHash = hash;
+                        }
+                    }
+                    if (m_samplePreviewTex) {
+                        const float maxSz = 64.f;
+                        float scale = std::min(maxSz / (float)v.sample_w, maxSz / (float)v.sample_h);
+                        float dispW = (float)v.sample_w * scale;
+                        float dispH = (float)v.sample_h * scale;
+                        ImGui::Image((ImTextureID)(intptr_t)m_samplePreviewTex, ImVec2(dispW, dispH));
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Captured sample (%dx%d)", v.sample_w, v.sample_h);
+                    }
+                }
             }
 
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Tolerance##prc", &v.tolerance);

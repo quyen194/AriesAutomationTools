@@ -1026,26 +1026,32 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         ImGui::TextDisabled("cron: %s", trig.cron_expr.c_str());
 
     } else if (trig.type == StartTrigger::Type::Pixel) {
-        // Range-based pixel trigger
-        ImGui::Text("Region: (%d,%d) - (%d,%d)",
-            trig.pixel_x1, trig.pixel_y1, trig.pixel_x2, trig.pixel_y2);
-        if (ImGui::Button("Pick anchor pixel##tr")) {
+        // Show picked position inline (always visible)
+        if (trig.pixel_sample.empty()) {
+            ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "No pixel picked yet");
+        } else {
+            uint32_t c = trig.pixel_sample[0];
+            uint8_t r = (c>>16)&0xFF, g = (c>>8)&0xFF, b = c&0xFF;
+            ImGui::ColorButton("##trcol", ImVec4(r/255.f,g/255.f,b/255.f,1.f),
+                ImGuiColorEditFlags_NoPicker|ImGuiColorEditFlags_NoTooltip, ImVec2(14,14));
+            ImGui::SameLine();
+            ImGui::Text("(%d,%d)  #%02X%02X%02X",
+                trig.pixel_x1, trig.pixel_y1, r, g, b);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Pick pixel##tr")) {
             m_trigPickActive = true;
             m_trigPickTarget = &trig;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hover over the target pixel; position and 1x1 sample are captured");
+            ImGui::SetTooltip("Hover over the target pixel and press Enter to capture");
 
-        ImGui::SetNextItemWidth(100); ImGui::InputInt("X1##tr", &trig.pixel_x1);
-        ImGui::SetNextItemWidth(100); ImGui::InputInt("Y1##tr", &trig.pixel_y1);
-        ImGui::SetNextItemWidth(100); ImGui::InputInt("X2##tr", &trig.pixel_x2);
-        ImGui::SetNextItemWidth(100); ImGui::InputInt("Y2##tr", &trig.pixel_y2);
+        if (!ImGui::CollapsingHeader("Pixel trigger config##tr")) return;
 
-        if (trig.pixel_sample.empty()) {
-            ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none — pick an anchor)");
-        } else {
-            ImGui::Text("Sample: %d x %d (%d px)",
-                trig.pixel_sample_w, trig.pixel_sample_h, (int)trig.pixel_sample.size());
+        ImGui::SetNextItemWidth(100); if (ImGui::InputInt("X##tr", &trig.pixel_x1)) m_dirty = true;
+        ImGui::SetNextItemWidth(100); if (ImGui::InputInt("Y##tr", &trig.pixel_y1)) m_dirty = true;
+
+        if (!trig.pixel_sample.empty()) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##tr")) {
                 trig.pixel_sample.clear();
@@ -1054,20 +1060,17 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
             }
         }
 
+        ImGui::SetNextItemWidth(100);
         if (ImGui::InputInt("Tolerance##tr", &trig.pixel_tolerance)) m_dirty = true;
         trig.pixel_tolerance = std::max(0, std::min(255, trig.pixel_tolerance));
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
 
-        if (ImGui::InputInt("Match percent##tr", &trig.pixel_match_percent)) m_dirty = true;
-        trig.pixel_match_percent = std::max(0, std::min(100, trig.pixel_match_percent));
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Fraction of pixels that must match (0-100)");
-
+        ImGui::SetNextItemWidth(100);
         if (ImGui::InputInt("Poll interval (ms)##tr", &trig.pixel_poll_ms)) m_dirty = true;
         trig.pixel_poll_ms = std::max(50, trig.pixel_poll_ms);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How often to check the region in milliseconds");
+            ImGui::SetTooltip("How often to check the pixel color in milliseconds");
     }
 }
 
