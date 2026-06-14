@@ -59,17 +59,20 @@ private:
 
     // ── Tree FlatNode (built each frame) ─────────────────────────────────────
     struct FlatNode {
-        enum class Kind { Normal, BlockHeader, BlockEnd };
+        enum class Kind { Normal, BlockHeader, BlockEnd, SectionSeparator };
 
-        Activity*               act          = nullptr; // nullptr for BlockEnd
+        Activity*               act          = nullptr; // nullptr for BlockEnd / SectionSeparator
         std::vector<Activity>*  parentList   = nullptr;
         int                     indexInParent = -1;
         int                     depth        = 0;
         Kind                    kind         = Kind::Normal;
         bool                    isExpanded   = false;
         std::vector<bool>       ancestorContinues; // [d] = ancestor at depth d has more siblings
-        std::string             blockId;           // for BlockEnd: matches header activity ID
-        std::string             blockName;         // for BlockEnd: display label
+        std::string             blockId;           // for BlockEnd/SectionSeparator: matches header activity ID
+        std::string             blockName;         // for BlockEnd/SectionSeparator: display label
+        // SectionSeparator only:
+        std::string             sectionLabel;      // "else", "case \"X\":", "default:"
+        std::vector<Activity>*  sectionBody = nullptr; // the body this separator manages
     };
 
     std::vector<FlatNode> m_flatNodes;

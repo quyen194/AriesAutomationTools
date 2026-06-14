@@ -376,12 +376,49 @@ void ActivityEditorWidget::CollectFlatNodes(std::vector<Activity>& list,
                 } else if constexpr (std::is_same_v<T,IfActivity>) {
                     if (v.then_body && !v.then_body->empty())
                         CollectFlatNodes(*v.then_body, depth + 1, childCont);
+                    // "else" separator — always shown so user can add to else_body
+                    {
+                        FlatNode sep;
+                        sep.depth = depth;
+                        sep.kind  = FlatNode::Kind::SectionSeparator;
+                        sep.ancestorContinues = ancestorCont;
+                        sep.blockId   = a.id;
+                        sep.blockName = BlockName(a);
+                        sep.sectionLabel = "else";
+                        sep.sectionBody  = v.else_body ? v.else_body.get() : nullptr;
+                        m_flatNodes.push_back(sep);
+                    }
                     if (v.else_body && !v.else_body->empty())
                         CollectFlatNodes(*v.else_body, depth + 1, childCont);
                 } else if constexpr (std::is_same_v<T,SwitchActivity>) {
-                    for (auto& sc : v.cases)
+                    for (auto& sc : v.cases) {
+                        {
+                            FlatNode sep;
+                            sep.depth = depth;
+                            sep.kind  = FlatNode::Kind::SectionSeparator;
+                            sep.ancestorContinues = ancestorCont;
+                            sep.blockId   = a.id;
+                            sep.blockName = BlockName(a);
+                            sep.sectionLabel = sc.value.empty()
+                                ? "case (empty):"
+                                : ("case \"" + sc.value + "\":");
+                            sep.sectionBody = sc.body ? sc.body.get() : nullptr;
+                            m_flatNodes.push_back(sep);
+                        }
                         if (sc.body && !sc.body->empty())
                             CollectFlatNodes(*sc.body, depth + 1, childCont);
+                    }
+                    {
+                        FlatNode sep;
+                        sep.depth = depth;
+                        sep.kind  = FlatNode::Kind::SectionSeparator;
+                        sep.ancestorContinues = ancestorCont;
+                        sep.blockId   = a.id;
+                        sep.blockName = BlockName(a);
+                        sep.sectionLabel = "default:";
+                        sep.sectionBody  = v.default_body ? v.default_body.get() : nullptr;
+                        m_flatNodes.push_back(sep);
+                    }
                     if (v.default_body && !v.default_body->empty())
                         CollectFlatNodes(*v.default_body, depth + 1, childCont);
                 } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
@@ -675,6 +712,33 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             continue;
         }
 
+        // ── SectionSeparator rows (else / case / default) ─────────────────────
+        if (fn.kind == FlatNode::Kind::SectionSeparator) {
+            std::string sepText = "-- " + fn.sectionLabel + " --";
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.75f, 0.35f, 1.f));
+            ImGui::TextUnformatted(sepText.c_str());
+            ImGui::PopStyleColor();
+            if (fn.sectionBody != nullptr) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f,0.85f,0.4f,1.f));
+                char addLbl[32]; snprintf(addLbl, sizeof(addLbl), "[+]##sep%d", ni);
+                if (ImGui::SmallButton(addLbl)) {
+                    m_addTargetList    = fn.sectionBody;
+                    m_expandedIds.insert(fn.blockId);
+                    m_draft            = Activity{GenId(), true, MouseClickActivity{}};
+                    m_editIdx          = -1;
+                    m_openModal        = true;
+                    m_keyCaptureActive = false;
+                    m_scrollCapture    = false;
+                    m_pickStage        = PickStage::None;
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add child activity to this section");
+            }
+            ImGui::PopID();
+            continue;
+        }
+
         // ── Normal / BlockHeader rows ─────────────────────────────────────────
         auto& a = *fn.act;
         bool isCurrent  = (currentStep >= 0 && fn.parentList == &wf.activities &&
@@ -707,9 +771,31 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             ImGui::SameLine(0, 2);
         }
 
+        std::string summary;
+        if (auto* ja = std::get_if<JumpActivity>(&a.data)) {
+            if (ja->target_id.empty()) {
+                summary = "jump -> (none)";
+            } else {
+                int tNum = 0; bool found = false;
+                for (auto& fn2 : m_flatNodes) {
+                    if (!fn2.act) continue;
+                    ++tNum;
+                    if (fn2.act->id == ja->target_id) {
+                        std::string ts = ActivitySummary(*fn2.act);
+                        if (ts.size() > 25) ts = ts.substr(0, 25) + "..";
+                        char tmp[160];
+                        snprintf(tmp, sizeof(tmp), "jump -> #%d %s", tNum, ts.c_str());
+                        summary = tmp; found = true; break;
+                    }
+                }
+                if (!found) summary = "jump -> (invalid)";
+            }
+        } else {
+            summary = ActivitySummary(a);
+        }
         char label[256];
         snprintf(label, sizeof(label), "%2d. %s##sel%d",
-                 visibleIdx+1, ActivitySummary(a).c_str(), ni);
+                 visibleIdx+1, summary.c_str(), ni);
 
         bool highlighted = isSelected || isCurrent;
         ImGuiSelectableFlags selFlags =
@@ -1627,21 +1713,35 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::BeginChild("##actlist_jmp", ImVec2(0,130), true);
             std::string filterLow(m_actFilterBuf);
             for (auto& c : filterLow) c = (char)std::tolower((unsigned char)c);
-            for (auto& fn : m_flatNodes) {
-                if (!fn.act || fn.kind == FlatNode::Kind::BlockEnd) continue;
-                std::string summary = ActivitySummary(*fn.act);
+            int jVisNum = 0;
+            for (auto& fn2 : m_flatNodes) {
+                if (!fn2.act) continue;
+                ++jVisNum;
+                std::string summary = ActivitySummary(*fn2.act);
                 std::string sumLow  = summary;
                 for (auto& c : sumLow) c = (char)std::tolower((unsigned char)c);
                 if (!filterLow.empty() && sumLow.find(filterLow)==std::string::npos) continue;
-                bool sel = (v.target_id == fn.act->id);
-                char lbl[256]; snprintf(lbl,sizeof(lbl),"%s##jmp%s",summary.c_str(),fn.act->id.c_str());
-                if (ImGui::Selectable(lbl, sel)) v.target_id = fn.act->id;
+                bool sel = (v.target_id == fn2.act->id);
+                char lbl[256]; snprintf(lbl,sizeof(lbl),"#%d %s##jmp%s",jVisNum,summary.c_str(),fn2.act->id.c_str());
+                if (ImGui::Selectable(lbl, sel)) v.target_id = fn2.act->id;
             }
             ImGui::EndChild();
-            if (!v.target_id.empty())
-                ImGui::TextDisabled("ID: %.24s", v.target_id.c_str());
-            else
+            if (!v.target_id.empty()) {
+                int tNum = 0; bool found = false;
+                for (auto& fn2 : m_flatNodes) {
+                    if (!fn2.act) continue;
+                    ++tNum;
+                    if (fn2.act->id == v.target_id) {
+                        std::string ts = ActivitySummary(*fn2.act);
+                        if (ts.size() > 30) ts = ts.substr(0, 30) + "..";
+                        ImGui::TextDisabled("-> #%d %s", tNum, ts.c_str());
+                        found = true; break;
+                    }
+                }
+                if (!found) ImGui::TextDisabled("ID: %.24s (not found)", v.target_id.c_str());
+            } else {
                 ImGui::TextColored(ImVec4(1,0.5f,0.3f,1), "No target selected");
+            }
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##jmp", &v.delay_ms);
             v.delay_ms = std::max(0, v.delay_ms);
             ImGui::TextDisabled("Jumps within the same activity list (body/branch/root).");
