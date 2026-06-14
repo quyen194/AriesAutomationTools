@@ -120,6 +120,12 @@ static std::string GenId() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+AppUI::~AppUI() {
+    if (m_trigSnipTexture)    { SDL_DestroyTexture(m_trigSnipTexture);    m_trigSnipTexture    = nullptr; }
+    if (m_trigSampleTex)      { SDL_DestroyTexture(m_trigSampleTex);      m_trigSampleTex      = nullptr; }
+    if (m_trigCrosshairCursor){ SDL_FreeCursor(m_trigCrosshairCursor);    m_trigCrosshairCursor= nullptr; }
+}
+
 AppUI::AppUI() {
     m_wfList.OnAdd       = [this]() { AddWorkflow(); };
     m_wfList.OnDuplicate = [this](const std::string& id) { DuplicateWorkflow(id); };
@@ -435,6 +441,64 @@ void AppUI::LoadConfig(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AppUI::Render() {
+    // ── Trigger snip state machine ────────────────────────────────────────────
+    if (m_trigSnipStage == TrigSnipStage::WaitMinimize) {
+        m_trigSnipStage = TrigSnipStage::WaitFrame;
+        return; // extra frame so window is fully hidden
+    }
+    if (m_trigSnipStage == TrigSnipStage::WaitFrame) {
+        IPixelChecker* checker = m_engine.PixelChecker();
+        if (checker)
+            m_trigSnipPixels = checker->CaptureFullScreen(m_trigSnipW, m_trigSnipH);
+        SDL_Renderer* renderer = SDL_GetRenderer(m_sdlWindow);
+        if (!m_trigSnipPixels.empty() && renderer && m_trigSnipW > 0 && m_trigSnipH > 0) {
+            if (m_trigSnipTexture) { SDL_DestroyTexture(m_trigSnipTexture); m_trigSnipTexture = nullptr; }
+            SDL_Texture* tex = SDL_CreateTexture(renderer,
+                SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                m_trigSnipW, m_trigSnipH);
+            if (tex) {
+                std::vector<uint32_t> argb(m_trigSnipPixels.size());
+                for (size_t i = 0; i < m_trigSnipPixels.size(); ++i)
+                    argb[i] = 0xFF000000u | m_trigSnipPixels[i];
+                SDL_UpdateTexture(tex, nullptr, argb.data(), m_trigSnipW * 4);
+                m_trigSnipTexture = tex;
+            }
+        }
+        if (m_sdlWindow && m_trigSnipOrigW > 0) {
+            SDL_DisplayMode dm{};
+            if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
+                SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
+                SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
+                SDL_SetWindowPosition(m_sdlWindow, 0, 0);
+                SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
+                SDL_ShowWindow(m_sdlWindow);
+                SDL_RaiseWindow(m_sdlWindow);
+            }
+            m_trigOrigCursor = SDL_GetCursor();
+            if (!m_trigCrosshairCursor)
+                m_trigCrosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+            SDL_SetCursor(m_trigCrosshairCursor);
+        }
+        m_trigSnipStage    = TrigSnipStage::Active;
+        m_trigSnipDragging = false;
+        m_trigSnipX1 = m_trigSnipY1 = m_trigSnipX2 = m_trigSnipY2 = 0;
+        return;
+    }
+    if (m_trigSnipStage == TrigSnipStage::Done) {
+        if (m_trigSnipTexture) { SDL_DestroyTexture(m_trigSnipTexture); m_trigSnipTexture = nullptr; }
+        m_trigSnipPixels.clear();
+        m_trigSnipStage = TrigSnipStage::None;
+        // Restore window
+        if (m_sdlWindow && m_trigSnipOrigW > 0) {
+            SDL_SetWindowBordered(m_sdlWindow, SDL_TRUE);
+            SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_FALSE);
+            SDL_SetWindowPosition(m_sdlWindow, m_trigSnipOrigX, m_trigSnipOrigY);
+            SDL_SetWindowSize(m_sdlWindow, m_trigSnipOrigW, m_trigSnipOrigH);
+            m_trigSnipOrigW = 0;
+            if (m_trigOrigCursor) { SDL_SetCursor(m_trigOrigCursor); m_trigOrigCursor = nullptr; }
+        }
+    }
+
     // Compute capture state before polling OS hotkeys so we can suppress them during capture
     bool anyCapture = m_cfgStartRecCapture || m_cfgStopRecCapture
                    || m_cfgStartAllCapture || m_cfgStopAllCapture
@@ -534,10 +598,120 @@ void AppUI::Render() {
 
     ImGui::End();
 
-    if (m_trigPickActive) RenderTriggerPickOverlay();
+    if (m_trigPickMode != TrigPickMode::None) RenderTriggerPickOverlay();
+    if (m_trigSnipStage == TrigSnipStage::Active) RenderTriggerSnipOverlay();
     RenderHotkeyConfigWindow();
     RenderAboutDialog();
     m_recOverlay.Render(m_recorder);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AppUI::RenderTriggerSnipOverlay() {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse;
+
+    if (ImGui::Begin("##trigsnipoverlay", nullptr, flags)) {
+        auto* dl  = ImGui::GetWindowDrawList();
+        ImVec2 sz = io.DisplaySize;
+
+        // Dimmed screenshot background
+        if (m_trigSnipTexture)
+            dl->AddImage((ImTextureID)(intptr_t)m_trigSnipTexture,
+                         ImVec2(0,0), sz,
+                         ImVec2(0,0), ImVec2(1,1), IM_COL32(80,80,80,255));
+
+        ImVec2 mp = io.MousePos;
+
+        if (ImGui::IsMouseClicked(0) && !m_trigSnipDragging) {
+            m_trigSnipX1 = m_trigSnipX2 = (int)mp.x;
+            m_trigSnipY1 = m_trigSnipY2 = (int)mp.y;
+            m_trigSnipDragging = true;
+        }
+        if (m_trigSnipDragging && ImGui::IsMouseDown(0)) {
+            m_trigSnipX2 = (int)mp.x;
+            m_trigSnipY2 = (int)mp.y;
+        }
+
+        int x1 = std::min(m_trigSnipX1, m_trigSnipX2);
+        int y1 = std::min(m_trigSnipY1, m_trigSnipY2);
+        int x2 = std::max(m_trigSnipX1, m_trigSnipX2);
+        int y2 = std::max(m_trigSnipY1, m_trigSnipY2);
+
+        if (m_trigSnipDragging && m_trigSnipTexture && m_trigSnipW > 0 && m_trigSnipH > 0) {
+            float u1 = (float)x1 / m_trigSnipW, v1 = (float)y1 / m_trigSnipH;
+            float u2 = (float)x2 / m_trigSnipW, v2 = (float)y2 / m_trigSnipH;
+            dl->AddImage((ImTextureID)(intptr_t)m_trigSnipTexture,
+                         ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
+                         ImVec2(u1,v1), ImVec2(u2,v2), IM_COL32(255,255,255,255));
+
+            auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
+                const float dashLen = 8.f, gapLen = 4.f;
+                float dx = p2.x-p1.x, dy = p2.y-p1.y;
+                float len = sqrtf(dx*dx+dy*dy);
+                if (len < 1.f) return;
+                float nx = dx/len, ny = dy/len, pos = 0.f; bool on = true;
+                while (pos < len) {
+                    float end = std::min(pos + (on ? dashLen : gapLen), len);
+                    if (on) dl->AddLine(ImVec2(p1.x+nx*pos,p1.y+ny*pos),
+                                        ImVec2(p1.x+nx*end,p1.y+ny*end),
+                                        IM_COL32(255,255,255,220), 2.f);
+                    pos = end; on = !on;
+                }
+            };
+            drawDashed(ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y1));
+            drawDashed(ImVec2((float)x2,(float)y1), ImVec2((float)x2,(float)y2));
+            drawDashed(ImVec2((float)x2,(float)y2), ImVec2((float)x1,(float)y2));
+            drawDashed(ImVec2((float)x1,(float)y2), ImVec2((float)x1,(float)y1));
+
+            char sizeLabel[64];
+            snprintf(sizeLabel, sizeof(sizeLabel), "%d x %d", x2-x1, y2-y1);
+            dl->AddText(ImVec2((float)x1+4,(float)y2+4), IM_COL32(255,255,255,255), sizeLabel);
+        } else {
+            float mx = mp.x, my = mp.y;
+            dl->AddLine(ImVec2(0,my), ImVec2(sz.x,my), IM_COL32(255,255,255,80), 1.f);
+            dl->AddLine(ImVec2(mx,0), ImVec2(mx,sz.y), IM_COL32(255,255,255,80), 1.f);
+        }
+
+        ImGui::SetCursorPos(ImVec2(8, 8));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,0.3f,1));
+        ImGui::Text("Drag to select region. Release to capture. Esc = cancel.");
+        ImGui::PopStyleColor();
+
+        if (m_trigSnipDragging && ImGui::IsMouseReleased(0)) {
+            m_trigSnipDragging = false;
+            int w = x2 - x1, h = y2 - y1;
+            if (w > 0 && h > 0 && !m_trigSnipPixels.empty() &&
+                m_trigSnipW > 0 && m_trigSnipH > 0 && m_trigPickTarget) {
+                m_trigPickTarget->pixel_x1 = x1; m_trigPickTarget->pixel_y1 = y1;
+                m_trigPickTarget->pixel_x2 = x2; m_trigPickTarget->pixel_y2 = y2;
+                m_trigPickTarget->pixel_sample_w = w;
+                m_trigPickTarget->pixel_sample_h = h;
+                m_trigPickTarget->pixel_sample.clear();
+                m_trigPickTarget->pixel_sample.reserve((size_t)w * h);
+                for (int row = y1; row < y2 && row < m_trigSnipH; ++row)
+                    for (int col = x1; col < x2 && col < m_trigSnipW; ++col)
+                        m_trigPickTarget->pixel_sample.push_back(
+                            m_trigSnipPixels[(size_t)row * m_trigSnipW + col]);
+                m_trigPickTarget = nullptr;
+                m_dirty = true;
+                m_trigSampleHash = 0; // force preview rebuild
+            }
+            m_trigSnipStage = TrigSnipStage::Done;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            m_trigSnipDragging = false;
+            m_trigSnipStage = TrigSnipStage::Done;
+        }
+    }
+    ImGui::End();
 }
 
 void AppUI::RenderQuitConfirmModal() {
@@ -874,8 +1048,8 @@ void AppUI::RenderTriggerPickOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pos = io.MousePos;
     pos.x += 16.f; pos.y += 16.f;
-    if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
-    if (pos.y + 90  > io.DisplaySize.y) pos.y = io.DisplaySize.y - 90;
+    if (pos.x + 260 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 260;
+    if (pos.y + 100 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 100;
     if (pos.x < 0) pos.x = 0;
     if (pos.y < 0) pos.y = 0;
 
@@ -889,45 +1063,72 @@ void AppUI::RenderTriggerPickOverlay() {
     if (ImGui::Begin("##trigpickoverlay", nullptr, flags)) {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
-        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Pick anchor pos: %d, %d", gx, gy);
-        ImGui::TextDisabled("This sets pixel_x1/y1 + captures 1x1 sample");
+
+        const char* lbl = (m_trigPickMode == TrigPickMode::RangeTo) ? "Pick end corner"
+                        : (m_trigPickMode == TrigPickMode::RangeFrom) ? "Pick start corner"
+                        : "Pick pixel";
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
+        if (m_trigPickMode == TrigPickMode::RangeTo && m_trigPickTarget)
+            ImGui::Text("Rect: %d x %d",
+                std::abs(gx - m_trigPickTarget->pixel_x1)+1,
+                std::abs(gy - m_trigPickTarget->pixel_y1)+1);
         ImGui::TextDisabled("Enter = confirm   Esc = cancel");
 
-        if (ImGui::Button("Capture##trigpick") ||
-            ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
-            if (m_trigPickTarget) {
-                m_trigPickTarget->pixel_x1 = gx;
-                m_trigPickTarget->pixel_y1 = gy;
-                m_trigPickTarget->pixel_x2 = gx;
-                m_trigPickTarget->pixel_y2 = gy;
+        auto capturePixel = [](int x, int y) -> uint32_t {
+#if defined(_WIN32)
+            HDC dc = GetDC(nullptr);
+            if (dc) {
+                COLORREF c = GetPixel(dc, x, y);
+                ReleaseDC(nullptr, dc);
+                if (c != CLR_INVALID)
+                    return ((uint32_t)GetRValue(c)<<16)|((uint32_t)GetGValue(c)<<8)|(uint32_t)GetBValue(c);
+            }
+#endif
+            return 0;
+        };
+
+        bool confirm = ImGui::Button("Capture##trigpick") ||
+                       ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        if (confirm && m_trigPickTarget) {
+            if (m_trigPickMode == TrigPickMode::Single) {
+                m_trigPickTarget->pixel_x1 = gx; m_trigPickTarget->pixel_y1 = gy;
+                m_trigPickTarget->pixel_x2 = gx; m_trigPickTarget->pixel_y2 = gy;
                 m_trigPickTarget->pixel_sample_w = 1;
                 m_trigPickTarget->pixel_sample_h = 1;
-                // Capture 1×1 sample via platform pixel reader
-#if defined(_WIN32)
-                {
-                    HDC dc = GetDC(nullptr);
-                    if (dc) {
-                        COLORREF c = GetPixel(dc, gx, gy);
-                        ReleaseDC(nullptr, dc);
-                        if (c != CLR_INVALID) {
-                            m_trigPickTarget->pixel_sample = {
-                                ((uint32_t)GetRValue(c) << 16) |
-                                ((uint32_t)GetGValue(c) << 8)  |
-                                 (uint32_t)GetBValue(c)
-                            };
-                        }
+                m_trigPickTarget->pixel_sample = { capturePixel(gx, gy) };
+                m_trigPickTarget = nullptr;
+                m_trigPickMode   = TrigPickMode::None;
+                m_dirty = true;
+                m_trigSampleHash = 0;
+            } else if (m_trigPickMode == TrigPickMode::RangeFrom) {
+                m_trigPickTarget->pixel_x1 = gx;
+                m_trigPickTarget->pixel_y1 = gy;
+                m_trigPickMode = TrigPickMode::RangeTo; // advance to end corner
+            } else if (m_trigPickMode == TrigPickMode::RangeTo) {
+                int x1 = std::min(m_trigPickTarget->pixel_x1, gx);
+                int y1 = std::min(m_trigPickTarget->pixel_y1, gy);
+                int x2 = std::max(m_trigPickTarget->pixel_x1, gx);
+                int y2 = std::max(m_trigPickTarget->pixel_y1, gy);
+                m_trigPickTarget->pixel_x1 = x1; m_trigPickTarget->pixel_y1 = y1;
+                m_trigPickTarget->pixel_x2 = x2; m_trigPickTarget->pixel_y2 = y2;
+                // Capture sample via pixel checker
+                IPixelChecker* checker = m_engine.PixelChecker();
+                if (checker) {
+                    PixelBuffer buf = checker->CaptureRegion(x1, y1, x2-x1+1, y2-y1+1);
+                    if (!buf.Empty()) {
+                        m_trigPickTarget->pixel_sample_w = buf.width;
+                        m_trigPickTarget->pixel_sample_h = buf.height;
+                        m_trigPickTarget->pixel_sample   = std::move(buf.pixels);
                     }
                 }
-#else
-                m_trigPickTarget->pixel_sample = {0};
-#endif
+                m_trigPickTarget = nullptr;
+                m_trigPickMode   = TrigPickMode::None;
                 m_dirty = true;
+                m_trigSampleHash = 0;
             }
-            m_trigPickActive = false;
-            m_trigPickTarget = nullptr;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-            m_trigPickActive = false;
+            m_trigPickMode   = TrigPickMode::None;
             m_trigPickTarget = nullptr;
         }
     }
@@ -1026,51 +1227,106 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         ImGui::TextDisabled("cron: %s", trig.cron_expr.c_str());
 
     } else if (trig.type == StartTrigger::Type::Pixel) {
-        // Show picked position inline (always visible)
-        if (trig.pixel_sample.empty()) {
-            ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "No pixel picked yet");
-        } else {
-            uint32_t c = trig.pixel_sample[0];
-            uint8_t r = (c>>16)&0xFF, g = (c>>8)&0xFF, b = c&0xFF;
-            ImGui::ColorButton("##trcol", ImVec4(r/255.f,g/255.f,b/255.f,1.f),
-                ImGuiColorEditFlags_NoPicker|ImGuiColorEditFlags_NoTooltip, ImVec2(14,14));
-            ImGui::SameLine();
-            ImGui::Text("(%d,%d)  #%02X%02X%02X",
-                trig.pixel_x1, trig.pixel_y1, r, g, b);
+        if (!ImGui::CollapsingHeader("Pixel trigger config##tr")) return;
+
+        // Capture region (snip tool — hide app, screenshot, overlay)
+        if (ImGui::Button("Capture region##tr")) {
+            if (m_sdlWindow) {
+                SDL_GetWindowPosition(m_sdlWindow, &m_trigSnipOrigX, &m_trigSnipOrigY);
+                SDL_GetWindowSize(m_sdlWindow, &m_trigSnipOrigW, &m_trigSnipOrigH);
+                SDL_HideWindow(m_sdlWindow);
+            }
+            m_trigPickTarget  = &trig;
+            m_trigSnipStage   = TrigSnipStage::WaitMinimize;
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hide the app and drag to capture a screen region");
+
         ImGui::SameLine();
-        if (ImGui::Button("Pick pixel##tr")) {
-            m_trigPickActive = true;
+
+        // Pick range (two-corner overlay picker)
+        if (ImGui::Button("Pick range##tr")) {
+            m_trigPickMode   = TrigPickMode::RangeFrom;
             m_trigPickTarget = &trig;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Hover over the target pixel and press Enter to capture");
+            ImGui::SetTooltip("Click two corners to define the region");
 
-        if (!ImGui::CollapsingHeader("Pixel trigger config##tr")) return;
+        // Manual coordinates
+        ImGui::SetNextItemWidth(90); if (ImGui::InputInt("X1##tr", &trig.pixel_x1)) m_dirty = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90); if (ImGui::InputInt("Y1##tr", &trig.pixel_y1)) m_dirty = true;
+        ImGui::SetNextItemWidth(90); if (ImGui::InputInt("X2##tr", &trig.pixel_x2)) m_dirty = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90); if (ImGui::InputInt("Y2##tr", &trig.pixel_y2)) m_dirty = true;
 
-        ImGui::SetNextItemWidth(100); if (ImGui::InputInt("X##tr", &trig.pixel_x1)) m_dirty = true;
-        ImGui::SetNextItemWidth(100); if (ImGui::InputInt("Y##tr", &trig.pixel_y1)) m_dirty = true;
-
-        if (!trig.pixel_sample.empty()) {
+        // Sample info + preview
+        if (trig.pixel_sample.empty()) {
+            ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none)");
+        } else {
+            ImGui::Text("Sample: %d x %d (%d px)",
+                trig.pixel_sample_w, trig.pixel_sample_h,
+                trig.pixel_sample_w * trig.pixel_sample_h);
             ImGui::SameLine();
             if (ImGui::Button("Clear##tr")) {
                 trig.pixel_sample.clear();
                 trig.pixel_sample_w = trig.pixel_sample_h = 0;
+                if (m_trigSampleTex) { SDL_DestroyTexture(m_trigSampleTex); m_trigSampleTex = nullptr; }
+                m_trigSampleHash = 0;
                 m_dirty = true;
+            }
+
+            // Rebuild preview texture when sample changes
+            SDL_Renderer* renderer = SDL_GetRenderer(m_sdlWindow);
+            if (renderer && trig.pixel_sample_w > 0 && trig.pixel_sample_h > 0) {
+                size_t hash = (size_t)trig.pixel_sample_w * 100003u
+                            + (size_t)trig.pixel_sample_h * 10007u
+                            + trig.pixel_sample.size();
+                if (hash != m_trigSampleHash || !m_trigSampleTex) {
+                    if (m_trigSampleTex) { SDL_DestroyTexture(m_trigSampleTex); m_trigSampleTex = nullptr; }
+                    SDL_Texture* tex = SDL_CreateTexture(renderer,
+                        SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                        trig.pixel_sample_w, trig.pixel_sample_h);
+                    if (tex) {
+                        std::vector<uint32_t> argb(trig.pixel_sample.size());
+                        for (size_t i = 0; i < trig.pixel_sample.size(); ++i)
+                            argb[i] = 0xFF000000u | trig.pixel_sample[i];
+                        SDL_UpdateTexture(tex, nullptr, argb.data(), trig.pixel_sample_w * 4);
+                        m_trigSampleTex  = tex;
+                        m_trigSampleHash = hash;
+                    }
+                }
+                if (m_trigSampleTex) {
+                    const float maxSz = 64.f;
+                    float scale = std::min(maxSz / (float)trig.pixel_sample_w,
+                                          maxSz / (float)trig.pixel_sample_h);
+                    ImGui::Image((ImTextureID)(intptr_t)m_trigSampleTex,
+                        ImVec2((float)trig.pixel_sample_w * scale,
+                               (float)trig.pixel_sample_h * scale));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Captured sample (%dx%d)",
+                            trig.pixel_sample_w, trig.pixel_sample_h);
+                }
             }
         }
 
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(120);
         if (ImGui::InputInt("Tolerance##tr", &trig.pixel_tolerance)) m_dirty = true;
         trig.pixel_tolerance = std::max(0, std::min(255, trig.pixel_tolerance));
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Allowed color difference per channel (0 = exact, 255 = any)");
 
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputInt("Match percent##tr", &trig.pixel_match_percent)) m_dirty = true;
+        trig.pixel_match_percent = std::max(0, std::min(100, trig.pixel_match_percent));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Minimum percentage of pixels that must match to trigger");
+
+        ImGui::SetNextItemWidth(120);
         if (ImGui::InputInt("Poll interval (ms)##tr", &trig.pixel_poll_ms)) m_dirty = true;
         trig.pixel_poll_ms = std::max(50, trig.pixel_poll_ms);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How often to check the pixel color in milliseconds");
+            ImGui::SetTooltip("How often to check the pixel region in milliseconds");
     }
 }
 

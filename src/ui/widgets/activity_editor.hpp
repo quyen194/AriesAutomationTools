@@ -96,7 +96,7 @@ private:
     void ExitFullscreenMode();
 
     // ── Snipping-tool capture state ───────────────────────────────────────────
-    enum class SnipStage { None, WaitFrame, Active, Done };
+    enum class SnipStage { None, WaitMinimize, WaitFrame, Active, Done };
     SnipStage    m_snipStage   = SnipStage::None;
     std::vector<uint32_t> m_snipPixels;
     int          m_snipW      = 0, m_snipH      = 0;

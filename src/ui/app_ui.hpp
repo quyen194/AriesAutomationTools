@@ -12,11 +12,12 @@
 
 struct SDL_Window;
 struct SDL_Texture;
+struct SDL_Cursor;
 
 class AppUI {
 public:
     AppUI();
-    ~AppUI() = default;
+    ~AppUI();
 
     void Init(const std::string& config_path, SDL_Window* sdlWindow);
     void Render();
@@ -113,10 +114,28 @@ private:
     char                   m_wfHkResumeBuf[64]{};
     bool                   m_wfHkResumeCapture = false;
 
-    // ── Pixel trigger position picker ─────────────────────────────────────────
-    bool          m_trigPickActive = false;
+    // ── Pixel trigger position / range picker ────────────────────────────────
+    enum class TrigPickMode { None, Single, RangeFrom, RangeTo };
+    TrigPickMode  m_trigPickMode   = TrigPickMode::None;
     StartTrigger* m_trigPickTarget = nullptr;
     void RenderTriggerPickOverlay();
+
+    // ── Pixel trigger region snip (Capture region) ───────────────────────────
+    enum class TrigSnipStage { None, WaitMinimize, WaitFrame, Active, Done };
+    TrigSnipStage         m_trigSnipStage    = TrigSnipStage::None;
+    std::vector<uint32_t> m_trigSnipPixels;
+    int                   m_trigSnipW        = 0, m_trigSnipH        = 0;
+    int                   m_trigSnipX1       = 0, m_trigSnipY1       = 0;
+    int                   m_trigSnipX2       = 0, m_trigSnipY2       = 0;
+    bool                  m_trigSnipDragging = false;
+    SDL_Texture*          m_trigSnipTexture  = nullptr;
+    int                   m_trigSnipOrigX    = 0, m_trigSnipOrigY    = 0;
+    int                   m_trigSnipOrigW    = 0, m_trigSnipOrigH    = 0;
+    SDL_Cursor*           m_trigCrosshairCursor = nullptr;
+    SDL_Cursor*           m_trigOrigCursor      = nullptr;
+    SDL_Texture*          m_trigSampleTex    = nullptr;
+    size_t                m_trigSampleHash   = 0;
+    void RenderTriggerSnipOverlay();
 
     // Workflow delete confirmation
     std::string   m_confirmDeleteWfId;

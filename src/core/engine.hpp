@@ -63,7 +63,8 @@ public:
     // Current activity index for a workflow (for UI status bar)
     int  CurrentActivityIndex(const std::string& id) const;
 
-    IWindowFinder* WindowFinder() { return m_windowFinder.get(); }
+    IWindowFinder* WindowFinder()  { return m_windowFinder.get(); }
+    IPixelChecker* PixelChecker()  { return m_pixelChecker.get(); }
 
     // Called when user wants to trigger a workflow directly (pixel/schedule trigger)
     using TriggerCallback = std::function<void(const std::string& workflow_id)>;

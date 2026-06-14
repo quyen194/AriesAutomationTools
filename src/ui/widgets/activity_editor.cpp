@@ -468,8 +468,14 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     ImGuiIO& io = ImGui::GetIO();
 
     // Handle snipping tool state machine
+    if (m_snipStage == SnipStage::WaitMinimize) {
+        // Window was hidden last frame; wait one more frame for OS compositor
+        m_snipStage = SnipStage::WaitFrame;
+        return;
+    }
+
     if (m_snipStage == SnipStage::WaitFrame) {
-        // Take screenshot now that the window is fullscreen
+        // Window is hidden — take clean screenshot, then go fullscreen for overlay
         IPixelChecker* checker = EditorPixelChecker();
         if (checker) {
             m_snipPixels = checker->CaptureFullScreen(m_snipW, m_snipH);
@@ -486,7 +492,23 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 m_snipTexture = tex;
             }
         }
-        m_snipStage   = SnipStage::Active;
+        // Now expand window to fullscreen for the selection overlay
+        if (m_sdlWindow && m_origWindowW > 0) {
+            SDL_DisplayMode dm{};
+            if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
+                SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
+                SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
+                SDL_SetWindowPosition(m_sdlWindow, 0, 0);
+                SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
+                SDL_ShowWindow(m_sdlWindow);
+                SDL_RaiseWindow(m_sdlWindow);
+            }
+            m_origCursor = SDL_GetCursor();
+            if (!m_crosshairCursor)
+                m_crosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+            SDL_SetCursor(m_crosshairCursor);
+        }
+        m_snipStage    = SnipStage::Active;
         m_snipDragging = false;
         m_snipX1 = m_snipY1 = m_snipX2 = m_snipY2 = 0;
     }
@@ -1541,14 +1563,18 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
 
             posMode(v.pos_mode);
 
-            // Snip capture button (primary workflow)
+            // Snip capture button (primary workflow) — hide app, screenshot, overlay
             if (ImGui::Button("Capture region##prc")) {
-                EnterFullscreenMode();
-                m_snipStage = SnipStage::WaitFrame;
+                if (m_sdlWindow) {
+                    SDL_GetWindowPosition(m_sdlWindow, &m_origWindowX, &m_origWindowY);
+                    SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
+                    SDL_HideWindow(m_sdlWindow);
+                }
+                m_snipStage = SnipStage::WaitMinimize;
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Expand to full screen, drag to select region, capture sample");
+                ImGui::SetTooltip("Hide app, take screenshot, drag to select region and capture sample");
 
             ImGui::SameLine();
 
