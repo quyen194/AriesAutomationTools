@@ -1233,7 +1233,7 @@ void ActivityEditorWidget::RenderPickOverlay() {
     if (pos.y < 0) pos.y = 0;
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGui::SetNextWindowBgAlpha(1.0f);
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse  | ImGuiWindowFlags_AlwaysAutoResize |
@@ -1243,11 +1243,15 @@ void ActivityEditorWidget::RenderPickOverlay() {
         int gx = 0, gy = 0;
         SDL_GetGlobalMouseState(&gx, &gy);
 
-        const char* lbl = "Pick pos";
-        if (m_pickStage == PickStage::DragTo || m_pickStage == PickStage::RangeTo)
-            lbl = "Pick end pos";
+        const char* lbl = "Click to pick pos";
+        if (m_pickStage == PickStage::DragFrom)
+            lbl = "Click drag start";
+        else if (m_pickStage == PickStage::DragTo)
+            lbl = "Click drag end";
         else if (m_pickStage == PickStage::RangeFrom)
-            lbl = "Pick start pos";
+            lbl = "Click range start";
+        else if (m_pickStage == PickStage::RangeTo)
+            lbl = "Click range end";
         ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
 
         if (m_pickStage == PickStage::RangeTo) {
@@ -1268,9 +1272,10 @@ void ActivityEditorWidget::RenderPickOverlay() {
 #endif
         }
 
-        ImGui::TextDisabled("Enter = confirm   Esc = cancel");
+        ImGui::TextDisabled("Click = confirm   Esc = cancel");
 
-        if (ImGui::Button("Capture##pick") || ImGui::IsKeyPressed(ImGuiKey_Enter, false))
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
             ApplyPickedCoords(gx, gy);
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             m_pickStage = PickStage::None;
@@ -1279,6 +1284,19 @@ void ActivityEditorWidget::RenderPickOverlay() {
         }
     }
     ImGui::End();
+
+    // Drag line: draw start point + line to cursor during DragTo stage
+    if (m_pickStage == PickStage::DragTo) {
+        if (auto* drag = std::get_if<MouseDragActivity>(&m_draft.data)) {
+            ImDrawList* bg = ImGui::GetBackgroundDrawList();
+            ImVec2 p1((float)drag->from_x, (float)drag->from_y);
+            ImVec2 p2 = ImGui::GetIO().MousePos;
+            const ImU32 col = IM_COL32(255, 200, 50, 220);
+            bg->AddCircleFilled(p1, 6.f, col);
+            bg->AddLine(p1, p2, col, 2.f);
+            bg->AddCircleFilled(p2, 6.f, IM_COL32(255, 200, 50, 120));
+        }
+    }
 
     // Opacity HUD — top-right corner, separate floating window
     {
@@ -1487,14 +1505,13 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             posMode(v.pos_mode);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("From X", &v.from_x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("From Y", &v.from_y);
-            if (ImGui::Button("Pick start##dfs")) {
-                EnterFullscreenMode(); m_pickStage = PickStage::DragFrom; ImGui::CloseCurrentPopup();
-            }
+            ImGui::TextDisabled("  ----->");
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To X", &v.to_x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To Y", &v.to_y);
-            if (ImGui::Button("Pick end##dfe")) {
-                EnterFullscreenMode(); m_pickStage = PickStage::DragTo; ImGui::CloseCurrentPopup();
+            if (ImGui::Button("Pick drag##drag")) {
+                EnterFullscreenMode(); m_pickStage = PickStage::DragFrom; ImGui::CloseCurrentPopup();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click start point, then click end point");
             btnCombo(v.button);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
             v.duration_ms = std::max(1, v.duration_ms);
