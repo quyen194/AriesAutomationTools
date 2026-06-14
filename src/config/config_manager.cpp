@@ -696,9 +696,10 @@ AppConfig ConfigManager::Load(const std::string& path) {
     cfg.stop_all_hotkey     = root.value("stop_all_hotkey",     "");
     cfg.pause_all_hotkey    = root.value("pause_all_hotkey",    "");
     cfg.resume_all_hotkey   = root.value("resume_all_hotkey",   "");
-    cfg.close_to_tray    = root.value("close_to_tray",    false);
-    cfg.minimize_to_tray = root.value("minimize_to_tray", false);
-    cfg.single_instance  = root.value("single_instance",  true);
+    cfg.close_to_tray         = root.value("close_to_tray",         false);
+    cfg.minimize_to_tray      = root.value("minimize_to_tray",      false);
+    cfg.single_instance       = root.value("single_instance",       true);
+    cfg.pick_overlay_opacity  = root.value("pick_overlay_opacity",  0.35f);
 
     if (root.contains("workflows")) {
         for (auto& wj : root["workflows"])
@@ -716,9 +717,10 @@ void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     root["stop_all_hotkey"]     = config.stop_all_hotkey;
     root["pause_all_hotkey"]    = config.pause_all_hotkey;
     root["resume_all_hotkey"]   = config.resume_all_hotkey;
-    root["close_to_tray"]    = config.close_to_tray;
-    root["minimize_to_tray"] = config.minimize_to_tray;
-    root["single_instance"]  = config.single_instance;
+    root["close_to_tray"]        = config.close_to_tray;
+    root["minimize_to_tray"]     = config.minimize_to_tray;
+    root["single_instance"]      = config.single_instance;
+    root["pick_overlay_opacity"] = config.pick_overlay_opacity;
 
     json wfs = json::array();
     for (auto& w : config.workflows) wfs.push_back(SerializeWorkflow(w));

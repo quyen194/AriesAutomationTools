@@ -284,5 +284,6 @@ struct AppConfig {
     bool        close_to_tray    = false;
     bool        minimize_to_tray = false;
     bool        single_instance  = true;
+    float       pick_overlay_opacity = 0.35f; // 0=transparent, 1=opaque
     std::vector<Workflow> workflows;
 };

@@ -20,9 +20,23 @@ struct ActivityEditorWidget {
     void SetSDLContext(SDL_Window* window, SDL_Renderer* renderer) {
         m_sdlWindow = window; m_sdlRenderer = renderer;
     }
+    void SetOverlayOpacity(float* p) { m_pOverlayOpacity = p; }
 
     // currentStep: index of the currently executing top-level activity (-1 = not running)
     void Render(Workflow& wf, int currentStep = -1);
+
+    // Called every frame by AppUI regardless of whether main UI is rendering.
+    // Runs the snip state machine (manages window hide/show/opacity).
+    void RunSnipStateMachine(Workflow& wf);
+
+    // Renders the floating pick-coordinate tooltip if picking is active.
+    // Can be called from outside the main ImGui window.
+    void RenderPickOverlayIfActive();
+
+    bool IsOverlayActive() const {
+        return m_pickStage != PickStage::None
+            || (m_snipStage != SnipStage::None && m_snipStage != SnipStage::Done);
+    }
 
 private:
     // ── Modal / selection state ───────────────────────────────────────────────
@@ -87,6 +101,7 @@ private:
     // ── SDL fullscreen overlay (shared by pick + snip) ────────────────────────
     SDL_Window*   m_sdlWindow   = nullptr;
     SDL_Renderer* m_sdlRenderer = nullptr;
+    float*        m_pOverlayOpacity = nullptr; // points to AppConfig::pick_overlay_opacity
     int m_origWindowX = 0, m_origWindowY = 0;
     int m_origWindowW = 0, m_origWindowH = 0; // 0 = not in fullscreen mode
     SDL_Cursor*   m_crosshairCursor   = nullptr;
@@ -103,8 +118,6 @@ private:
     int          m_snipX1     = 0, m_snipY1     = 0;
     int          m_snipX2     = 0, m_snipY2     = 0;
     bool         m_snipDragging = false;
-    SDL_Texture* m_snipTexture = nullptr;
-
     // ── Sample image preview texture ──────────────────────────────────────────
     SDL_Texture* m_samplePreviewTex  = nullptr;
     size_t       m_samplePreviewHash = 0;

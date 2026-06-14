@@ -121,7 +121,6 @@ static std::string GenId() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 AppUI::~AppUI() {
-    if (m_trigSnipTexture)    { SDL_DestroyTexture(m_trigSnipTexture);    m_trigSnipTexture    = nullptr; }
     if (m_trigSampleTex)      { SDL_DestroyTexture(m_trigSampleTex);      m_trigSampleTex      = nullptr; }
     if (m_trigCrosshairCursor){ SDL_FreeCursor(m_trigCrosshairCursor);    m_trigCrosshairCursor= nullptr; }
 }
@@ -205,6 +204,7 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     ApplyResumeAllHotkey(m_config.resume_all_hotkey);
     m_actEditor.SetWorkflows(&m_config.workflows);
     m_actEditor.SetSDLContext(sdlWindow, SDL_GetRenderer(sdlWindow));
+    m_actEditor.SetOverlayOpacity(&m_config.pick_overlay_opacity);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
         m_engine.StartWorkflow(id);
@@ -441,29 +441,25 @@ void AppUI::LoadConfig(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AppUI::Render() {
+    // Hoist selected-workflow lookup — needed by RunSnipStateMachine and main UI
+    auto selIt = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
+        [&](auto& w){ return w.id == m_selectedId; });
+
+    // Activity editor snip SM must run every frame (manages window show/hide/opacity)
+    if (selIt != m_config.workflows.end())
+        m_actEditor.RunSnipStateMachine(*selIt);
+
     // ── Trigger snip state machine ────────────────────────────────────────────
     if (m_trigSnipStage == TrigSnipStage::WaitMinimize) {
         m_trigSnipStage = TrigSnipStage::WaitFrame;
         return; // extra frame so window is fully hidden
     }
     if (m_trigSnipStage == TrigSnipStage::WaitFrame) {
+        // Capture screenshot pixels — kept for pixel extraction on mouse release.
+        // No texture created: SDL_SetWindowOpacity provides live desktop transparency.
         IPixelChecker* checker = m_engine.PixelChecker();
         if (checker)
             m_trigSnipPixels = checker->CaptureFullScreen(m_trigSnipW, m_trigSnipH);
-        SDL_Renderer* renderer = SDL_GetRenderer(m_sdlWindow);
-        if (!m_trigSnipPixels.empty() && renderer && m_trigSnipW > 0 && m_trigSnipH > 0) {
-            if (m_trigSnipTexture) { SDL_DestroyTexture(m_trigSnipTexture); m_trigSnipTexture = nullptr; }
-            SDL_Texture* tex = SDL_CreateTexture(renderer,
-                SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
-                m_trigSnipW, m_trigSnipH);
-            if (tex) {
-                std::vector<uint32_t> argb(m_trigSnipPixels.size());
-                for (size_t i = 0; i < m_trigSnipPixels.size(); ++i)
-                    argb[i] = 0xFF000000u | m_trigSnipPixels[i];
-                SDL_UpdateTexture(tex, nullptr, argb.data(), m_trigSnipW * 4);
-                m_trigSnipTexture = tex;
-            }
-        }
         if (m_sdlWindow && m_trigSnipOrigW > 0) {
             SDL_DisplayMode dm{};
             if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
@@ -474,6 +470,7 @@ void AppUI::Render() {
                 SDL_ShowWindow(m_sdlWindow);
                 SDL_RaiseWindow(m_sdlWindow);
             }
+            SDL_SetWindowOpacity(m_sdlWindow, m_config.pick_overlay_opacity);
             m_trigOrigCursor = SDL_GetCursor();
             if (!m_trigCrosshairCursor)
                 m_trigCrosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -485,11 +482,11 @@ void AppUI::Render() {
         return;
     }
     if (m_trigSnipStage == TrigSnipStage::Done) {
-        if (m_trigSnipTexture) { SDL_DestroyTexture(m_trigSnipTexture); m_trigSnipTexture = nullptr; }
         m_trigSnipPixels.clear();
         m_trigSnipStage = TrigSnipStage::None;
         // Restore window
         if (m_sdlWindow && m_trigSnipOrigW > 0) {
+            SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
             SDL_SetWindowBordered(m_sdlWindow, SDL_TRUE);
             SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_FALSE);
             SDL_SetWindowPosition(m_sdlWindow, m_trigSnipOrigX, m_trigSnipOrigY);
@@ -528,76 +525,83 @@ void AppUI::Render() {
         }
     }
 
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(0,0));
-    ImGui::SetNextWindowSize(io.DisplaySize);
-    ImGuiWindowFlags mainFlags =
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_MenuBar;
+    // Determine if any pick/capture overlay is active — hides the main UI
+    bool overlayActive = m_actEditor.IsOverlayActive()
+                      || m_trigPickMode != TrigPickMode::None
+                      || m_trigSnipStage == TrigSnipStage::Active;
 
-    ImGui::Begin("##main", nullptr, mainFlags);
+    if (!overlayActive) {
+        ImGuiIO& io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(0,0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGuiWindowFlags mainFlags =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_MenuBar;
 
-    RenderMenuBar();
-    RenderTopBar();
+        ImGui::Begin("##main", nullptr, mainFlags);
 
-    // Quit confirmation modal
-    RenderQuitConfirmModal();
+        RenderMenuBar();
+        RenderTopBar();
 
-    // Workflow delete confirmation modal
-    if (m_pendingConfirmWf) {
-        ImGui::OpenPopup("Confirm Delete##wf");
-        m_pendingConfirmWf = false;
-    }
-    if (ImGui::BeginPopupModal("Confirm Delete##wf", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
-            [&](auto& w){ return w.id == m_confirmDeleteWfId; });
-        const char* name = (it != m_config.workflows.end()) ? it->name.c_str() : "?";
-        ImGui::Text("Delete workflow \"%s\"?", name);
-        ImGui::Separator();
-        if (ImGui::Button("Yes##wfdel", ImVec2(80, 0))) {
-            DeleteWorkflow(m_confirmDeleteWfId);
-            m_confirmDeleteWfId.clear();
-            ImGui::CloseCurrentPopup();
+        // Quit confirmation modal
+        RenderQuitConfirmModal();
+
+        // Workflow delete confirmation modal
+        if (m_pendingConfirmWf) {
+            ImGui::OpenPopup("Confirm Delete##wf");
+            m_pendingConfirmWf = false;
         }
+        if (ImGui::BeginPopupModal("Confirm Delete##wf", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
+                [&](auto& w){ return w.id == m_confirmDeleteWfId; });
+            const char* name = (it != m_config.workflows.end()) ? it->name.c_str() : "?";
+            ImGui::Text("Delete workflow \"%s\"?", name);
+            ImGui::Separator();
+            if (ImGui::Button("Yes##wfdel", ImVec2(80, 0))) {
+                DeleteWorkflow(m_confirmDeleteWfId);
+                m_confirmDeleteWfId.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("No##wfdel", ImVec2(80, 0))) {
+                m_confirmDeleteWfId.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        float leftW = 200.0f;
+        ImGui::BeginChild("##left", ImVec2(leftW, 0), true);
+        m_wfList.Render(
+            m_config.workflows,
+            [this](const std::string& id) -> WorkflowStatus {
+                if (m_engine.IsStarting(id))        return WorkflowStatus::Starting;
+                if (!m_engine.IsRunning(id))        return WorkflowStatus::Idle;
+                if (m_engine.IsPaused(id))          return WorkflowStatus::Paused;
+                if (m_engine.IsSuspended(id))       return WorkflowStatus::Interrupted;
+                if (m_engine.IsWaitingRepeat(id))   return WorkflowStatus::WaitingRepeat;
+                return WorkflowStatus::Running;
+            },
+            m_selectedId);
+        ImGui::EndChild();
+
         ImGui::SameLine();
-        if (ImGui::Button("No##wfdel", ImVec2(80, 0))) {
-            m_confirmDeleteWfId.clear();
-            ImGui::CloseCurrentPopup();
+
+        ImGui::BeginChild("##right", ImVec2(0, 0), true);
+        if (selIt != m_config.workflows.end()) {
+            RenderWorkflowPanel(*selIt);
+        } else {
+            ImGui::TextDisabled("Select a workflow on the left.");
         }
-        ImGui::EndPopup();
+        ImGui::EndChild();
+
+        ImGui::End();
     }
 
-    float leftW = 200.0f;
-    ImGui::BeginChild("##left", ImVec2(leftW, 0), true);
-    m_wfList.Render(
-        m_config.workflows,
-        [this](const std::string& id) -> WorkflowStatus {
-            if (m_engine.IsStarting(id))        return WorkflowStatus::Starting;
-            if (!m_engine.IsRunning(id))        return WorkflowStatus::Idle;
-            if (m_engine.IsPaused(id))          return WorkflowStatus::Paused;
-            if (m_engine.IsSuspended(id))       return WorkflowStatus::Interrupted;
-            if (m_engine.IsWaitingRepeat(id))   return WorkflowStatus::WaitingRepeat;
-            return WorkflowStatus::Running;
-        },
-        m_selectedId);
-    ImGui::EndChild();
-
-    ImGui::SameLine();
-
-    ImGui::BeginChild("##right", ImVec2(0, 0), true);
-    auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
-        [&](auto& w){ return w.id == m_selectedId; });
-    if (it != m_config.workflows.end()) {
-        RenderWorkflowPanel(*it);
-    } else {
-        ImGui::TextDisabled("Select a workflow on the left.");
-    }
-    ImGui::EndChild();
-
-    ImGui::End();
-
+    // Overlays always rendered (floating windows work outside the main window context)
+    m_actEditor.RenderPickOverlayIfActive();
     if (m_trigPickMode != TrigPickMode::None) RenderTriggerPickOverlay();
     if (m_trigSnipStage == TrigSnipStage::Active) RenderTriggerSnipOverlay();
     RenderHotkeyConfigWindow();
@@ -609,6 +613,8 @@ void AppUI::Render() {
 
 void AppUI::RenderTriggerSnipOverlay() {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Main full-screen transparent capture window (all events + drawing)
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::SetNextWindowBgAlpha(0.0f);
@@ -620,15 +626,9 @@ void AppUI::RenderTriggerSnipOverlay() {
     if (ImGui::Begin("##trigsnipoverlay", nullptr, flags)) {
         auto* dl  = ImGui::GetWindowDrawList();
         ImVec2 sz = io.DisplaySize;
-
-        // Dimmed screenshot background
-        if (m_trigSnipTexture)
-            dl->AddImage((ImTextureID)(intptr_t)m_trigSnipTexture,
-                         ImVec2(0,0), sz,
-                         ImVec2(0,0), ImVec2(1,1), IM_COL32(80,80,80,255));
-
         ImVec2 mp = io.MousePos;
 
+        // Update drag state
         if (ImGui::IsMouseClicked(0) && !m_trigSnipDragging) {
             m_trigSnipX1 = m_trigSnipX2 = (int)mp.x;
             m_trigSnipY1 = m_trigSnipY2 = (int)mp.y;
@@ -644,13 +644,7 @@ void AppUI::RenderTriggerSnipOverlay() {
         int x2 = std::max(m_trigSnipX1, m_trigSnipX2);
         int y2 = std::max(m_trigSnipY1, m_trigSnipY2);
 
-        if (m_trigSnipDragging && m_trigSnipTexture && m_trigSnipW > 0 && m_trigSnipH > 0) {
-            float u1 = (float)x1 / m_trigSnipW, v1 = (float)y1 / m_trigSnipH;
-            float u2 = (float)x2 / m_trigSnipW, v2 = (float)y2 / m_trigSnipH;
-            dl->AddImage((ImTextureID)(intptr_t)m_trigSnipTexture,
-                         ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
-                         ImVec2(u1,v1), ImVec2(u2,v2), IM_COL32(255,255,255,255));
-
+        if (m_trigSnipDragging) {
             auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
                 const float dashLen = 8.f, gapLen = 4.f;
                 float dx = p2.x-p1.x, dy = p2.y-p1.y;
@@ -679,11 +673,13 @@ void AppUI::RenderTriggerSnipOverlay() {
             dl->AddLine(ImVec2(mx,0), ImVec2(mx,sz.y), IM_COL32(255,255,255,80), 1.f);
         }
 
-        ImGui::SetCursorPos(ImVec2(8, 8));
+        // Instruction text (bottom-left)
+        ImGui::SetCursorPos(ImVec2(8, io.DisplaySize.y - 28.f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,0.3f,1));
         ImGui::Text("Drag to select region. Release to capture. Esc = cancel.");
         ImGui::PopStyleColor();
 
+        // Confirm on mouse release
         if (m_trigSnipDragging && ImGui::IsMouseReleased(0)) {
             m_trigSnipDragging = false;
             int w = x2 - x1, h = y2 - y1;
@@ -701,7 +697,7 @@ void AppUI::RenderTriggerSnipOverlay() {
                             m_trigSnipPixels[(size_t)row * m_trigSnipW + col]);
                 m_trigPickTarget = nullptr;
                 m_dirty = true;
-                m_trigSampleHash = 0; // force preview rebuild
+                m_trigSampleHash = 0;
             }
             m_trigSnipStage = TrigSnipStage::Done;
         }
@@ -712,6 +708,28 @@ void AppUI::RenderTriggerSnipOverlay() {
         }
     }
     ImGui::End();
+
+    // Opacity HUD — top-right corner
+    {
+        ImGuiWindowFlags hudFlags =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        if (ImGui::Begin("##trigsniphud", nullptr, hudFlags)) {
+            ImGui::TextDisabled("Overlay opacity");
+            float pct = m_config.pick_overlay_opacity * 100.f;
+            ImGui::SetNextItemWidth(200.f);
+            if (ImGui::SliderFloat("##tsopa", &pct, 5.f, 95.f, "%.0f%%")) {
+                m_config.pick_overlay_opacity = pct / 100.f;
+                if (m_sdlWindow)
+                    SDL_SetWindowOpacity(m_sdlWindow, m_config.pick_overlay_opacity);
+                m_dirty = true;
+            }
+        }
+        ImGui::End();
+    }
 }
 
 void AppUI::RenderQuitConfirmModal() {
@@ -1098,6 +1116,7 @@ void AppUI::RenderTriggerPickOverlay() {
                 m_trigPickTarget->pixel_sample = { capturePixel(gx, gy) };
                 m_trigPickTarget = nullptr;
                 m_trigPickMode   = TrigPickMode::None;
+                if (m_sdlWindow) SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
                 m_dirty = true;
                 m_trigSampleHash = 0;
             } else if (m_trigPickMode == TrigPickMode::RangeFrom) {
@@ -1123,6 +1142,7 @@ void AppUI::RenderTriggerPickOverlay() {
                 }
                 m_trigPickTarget = nullptr;
                 m_trigPickMode   = TrigPickMode::None;
+                if (m_sdlWindow) SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
                 m_dirty = true;
                 m_trigSampleHash = 0;
             }
@@ -1130,9 +1150,33 @@ void AppUI::RenderTriggerPickOverlay() {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             m_trigPickMode   = TrigPickMode::None;
             m_trigPickTarget = nullptr;
+            if (m_sdlWindow) SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
         }
     }
     ImGui::End();
+
+    // Opacity HUD — top-right corner
+    {
+        ImGuiIO& hudIo = ImGui::GetIO();
+        ImGuiWindowFlags hudFlags =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::SetNextWindowPos(ImVec2(hudIo.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        if (ImGui::Begin("##trigpickhud", nullptr, hudFlags)) {
+            ImGui::TextDisabled("Overlay opacity");
+            float pct = m_config.pick_overlay_opacity * 100.f;
+            ImGui::SetNextItemWidth(200.f);
+            if (ImGui::SliderFloat("##tpopa", &pct, 5.f, 95.f, "%.0f%%")) {
+                m_config.pick_overlay_opacity = pct / 100.f;
+                if (m_sdlWindow)
+                    SDL_SetWindowOpacity(m_sdlWindow, m_config.pick_overlay_opacity);
+                m_dirty = true;
+            }
+        }
+        ImGui::End();
+    }
 }
 
 void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
@@ -1248,6 +1292,8 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
         if (ImGui::Button("Pick range##tr")) {
             m_trigPickMode   = TrigPickMode::RangeFrom;
             m_trigPickTarget = &trig;
+            if (m_sdlWindow)
+                SDL_SetWindowOpacity(m_sdlWindow, m_config.pick_overlay_opacity);
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Click two corners to define the region");

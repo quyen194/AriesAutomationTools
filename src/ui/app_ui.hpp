@@ -128,7 +128,6 @@ private:
     int                   m_trigSnipX1       = 0, m_trigSnipY1       = 0;
     int                   m_trigSnipX2       = 0, m_trigSnipY2       = 0;
     bool                  m_trigSnipDragging = false;
-    SDL_Texture*          m_trigSnipTexture  = nullptr;
     int                   m_trigSnipOrigX    = 0, m_trigSnipOrigY    = 0;
     int                   m_trigSnipOrigW    = 0, m_trigSnipOrigH    = 0;
     SDL_Cursor*           m_trigCrosshairCursor = nullptr;

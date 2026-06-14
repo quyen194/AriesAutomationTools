@@ -17,7 +17,6 @@
 // ── Destructor ────────────────────────────────────────────────────────────────
 ActivityEditorWidget::~ActivityEditorWidget() {
     if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
-    if (m_snipTexture)      { SDL_DestroyTexture(m_snipTexture);      m_snipTexture = nullptr; }
     if (m_crosshairCursor)  { SDL_FreeCursor(m_crosshairCursor);      m_crosshairCursor = nullptr; }
 }
 
@@ -336,6 +335,8 @@ void ActivityEditorWidget::EnterFullscreenMode() {
         SDL_SetWindowPosition(m_sdlWindow, 0, 0);
         SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
     }
+    if (m_pOverlayOpacity)
+        SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
     m_origCursor = SDL_GetCursor();
     if (!m_crosshairCursor)
         m_crosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -344,6 +345,7 @@ void ActivityEditorWidget::EnterFullscreenMode() {
 
 void ActivityEditorWidget::ExitFullscreenMode() {
     if (!m_sdlWindow || m_origWindowW <= 0) return;
+    SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
     SDL_SetWindowBordered(m_sdlWindow, SDL_TRUE);
     SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_FALSE);
     SDL_SetWindowPosition(m_sdlWindow, m_origWindowX, m_origWindowY);
@@ -462,12 +464,9 @@ void ActivityEditorWidget::RebuildFlatNodes(Workflow& wf) {
     CollectFlatNodes(wf.activities, 0, {});
 }
 
-// ── Main Render ───────────────────────────────────────────────────────────────
+// ── Snip state machine (called by AppUI every frame, even when main UI is hidden) ─
 
-void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
-    ImGuiIO& io = ImGui::GetIO();
-
-    // Handle snipping tool state machine
+void ActivityEditorWidget::RunSnipStateMachine(Workflow& wf) {
     if (m_snipStage == SnipStage::WaitMinimize) {
         // Window was hidden last frame; wait one more frame for OS compositor
         m_snipStage = SnipStage::WaitFrame;
@@ -475,24 +474,14 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
     }
 
     if (m_snipStage == SnipStage::WaitFrame) {
-        // Window is hidden — take clean screenshot, then go fullscreen for overlay
+        // Capture screenshot pixels — needed for pixel extraction on mouse release.
+        // We no longer display it as a texture; SDL_SetWindowOpacity provides the
+        // transparent overlay so the user sees the live desktop instead.
         IPixelChecker* checker = EditorPixelChecker();
-        if (checker) {
+        if (checker)
             m_snipPixels = checker->CaptureFullScreen(m_snipW, m_snipH);
-        }
-        if (!m_snipPixels.empty() && m_sdlRenderer && m_snipW > 0 && m_snipH > 0) {
-            if (m_snipTexture) { SDL_DestroyTexture(m_snipTexture); m_snipTexture = nullptr; }
-            SDL_Texture* tex = SDL_CreateTexture(m_sdlRenderer,
-                SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, m_snipW, m_snipH);
-            if (tex) {
-                std::vector<uint32_t> argb(m_snipW * m_snipH);
-                for (int px = 0; px < m_snipW * m_snipH; ++px)
-                    argb[px] = 0xFF000000u | m_snipPixels[px];
-                SDL_UpdateTexture(tex, nullptr, argb.data(), m_snipW * 4);
-                m_snipTexture = tex;
-            }
-        }
-        // Now expand window to fullscreen for the selection overlay
+
+        // Re-show window as borderless full-screen transparent overlay
         if (m_sdlWindow && m_origWindowW > 0) {
             SDL_DisplayMode dm{};
             if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
@@ -503,6 +492,8 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
                 SDL_ShowWindow(m_sdlWindow);
                 SDL_RaiseWindow(m_sdlWindow);
             }
+            if (m_pOverlayOpacity)
+                SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
             m_origCursor = SDL_GetCursor();
             if (!m_crosshairCursor)
                 m_crosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -515,16 +506,26 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
     if (m_snipStage == SnipStage::Active) {
         RenderSnipOverlay(wf);
-        return; // Don't render normal UI while snipping
+        return;
     }
 
     if (m_snipStage == SnipStage::Done) {
-        if (m_snipTexture) { SDL_DestroyTexture(m_snipTexture); m_snipTexture = nullptr; }
         m_snipPixels.clear();
         m_snipStage = SnipStage::None;
         ExitFullscreenMode();
         m_openModal = true;
     }
+}
+
+void ActivityEditorWidget::RenderPickOverlayIfActive() {
+    if (m_pickStage != PickStage::None)
+        RenderPickOverlay();
+}
+
+// ── Main Render ───────────────────────────────────────────────────────────────
+
+void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
+    ImGuiIO& io = ImGui::GetIO();
 
     // Rebuild FlatNode list
     RebuildFlatNodes(wf);
@@ -1085,10 +1086,6 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         ImGui::EndPopup();
     }
 
-    // Pick overlay (rendered outside modal when active)
-    if (m_pickStage != PickStage::None)
-        RenderPickOverlay();
-
     if (m_openModal) {
         ImGui::OpenPopup("##actmodal");
         m_openModal = false;
@@ -1100,6 +1097,8 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
 
 void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Main full-screen transparent capture window (all events + drawing here)
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::SetNextWindowBgAlpha(0.0f);
@@ -1111,15 +1110,9 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
     if (ImGui::Begin("##snipoverlay", nullptr, flags)) {
         auto* dl  = ImGui::GetWindowDrawList();
         ImVec2 sz = io.DisplaySize;
-
-        // Draw screenshot dimmed
-        if (m_snipTexture)
-            dl->AddImage((ImTextureID)(intptr_t)m_snipTexture,
-                         ImVec2(0,0), sz,
-                         ImVec2(0,0), ImVec2(1,1), IM_COL32(80,80,80,255));
-
         ImVec2 mp = io.MousePos;
 
+        // Update drag state
         if (ImGui::IsMouseClicked(0) && !m_snipDragging) {
             m_snipX1 = m_snipX2 = (int)mp.x;
             m_snipY1 = m_snipY2 = (int)mp.y;
@@ -1135,15 +1128,8 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
         int x2 = std::max(m_snipX1, m_snipX2);
         int y2 = std::max(m_snipY1, m_snipY2);
 
-        if (m_snipDragging && m_snipTexture && m_snipW > 0 && m_snipH > 0) {
-            // Selected region at full brightness
-            float u1 = (float)x1 / m_snipW, v1 = (float)y1 / m_snipH;
-            float u2 = (float)x2 / m_snipW, v2 = (float)y2 / m_snipH;
-            dl->AddImage((ImTextureID)(intptr_t)m_snipTexture,
-                         ImVec2((float)x1,(float)y1), ImVec2((float)x2,(float)y2),
-                         ImVec2(u1,v1), ImVec2(u2,v2), IM_COL32(255,255,255,255));
-
-            // Dashed border around selection
+        if (m_snipDragging) {
+            // Dashed selection border
             auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
                 const float dashLen = 8.f, gapLen = 4.f;
                 float dx = p2.x - p1.x, dy = p2.y - p1.y;
@@ -1171,14 +1157,14 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
             dl->AddText(ImVec2((float)x1+4, (float)y2+4),
                         IM_COL32(255,255,255,255), sizeLabel);
         } else {
-            // Crosshair guide lines before dragging starts
+            // Crosshair guide lines
             float mx = mp.x, my = mp.y;
             dl->AddLine(ImVec2(0, my), ImVec2(sz.x, my), IM_COL32(255,255,255,80), 1.f);
             dl->AddLine(ImVec2(mx, 0), ImVec2(mx, sz.y), IM_COL32(255,255,255,80), 1.f);
         }
 
-        // Instruction text
-        ImGui::SetCursorPos(ImVec2(8, 8));
+        // Instruction text (bottom-left)
+        ImGui::SetCursorPos(ImVec2(8, io.DisplaySize.y - 28.f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,0.3f,1));
         ImGui::Text("Drag to select region. Release to capture. Esc = cancel.");
         ImGui::PopStyleColor();
@@ -1211,6 +1197,28 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
         }
     }
     ImGui::End();
+
+    // Opacity HUD — top-right corner, separate floating window
+    {
+        ImGuiWindowFlags hudFlags =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        if (ImGui::Begin("##sniphud", nullptr, hudFlags)) {
+            ImGui::TextDisabled("Overlay opacity");
+            if (m_pOverlayOpacity) {
+                float pct = *m_pOverlayOpacity * 100.f;
+                ImGui::SetNextItemWidth(200.f);
+                if (ImGui::SliderFloat("##snipopa", &pct, 5.f, 95.f, "%.0f%%")) {
+                    *m_pOverlayOpacity = pct / 100.f;
+                    if (m_sdlWindow) SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
+                }
+            }
+        }
+        ImGui::End();
+    }
 }
 
 // ── Coordinate + color picker overlay ────────────────────────────────────────
@@ -1271,6 +1279,29 @@ void ActivityEditorWidget::RenderPickOverlay() {
         }
     }
     ImGui::End();
+
+    // Opacity HUD — top-right corner, separate floating window
+    {
+        ImGuiIO& io2 = ImGui::GetIO();
+        ImGuiWindowFlags hudFlags =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+        ImGui::SetNextWindowPos(ImVec2(io2.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        if (ImGui::Begin("##pickhud", nullptr, hudFlags)) {
+            ImGui::TextDisabled("Overlay opacity");
+            if (m_pOverlayOpacity) {
+                float pct = *m_pOverlayOpacity * 100.f;
+                ImGui::SetNextItemWidth(200.f);
+                if (ImGui::SliderFloat("##pickopa", &pct, 5.f, 95.f, "%.0f%%")) {
+                    *m_pOverlayOpacity = pct / 100.f;
+                    if (m_sdlWindow) SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
+                }
+            }
+        }
+        ImGui::End();
+    }
 }
 
 void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
