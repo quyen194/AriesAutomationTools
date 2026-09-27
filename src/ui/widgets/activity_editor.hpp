@@ -52,6 +52,12 @@ private:
     // ── Coordinate picker state ───────────────────────────────────────────────
     enum class PickStage { None, Single, DragFrom, DragTo, RangeFrom, RangeTo };
     PickStage m_pickStage = PickStage::None;
+    // Screen position of the target window's client origin, captured when a
+    // pick/snip starts. Subtracted from picked screen coords for Relative mode
+    // (0,0 for Absolute) so stored coords match what the scheduler resolves.
+    int       m_pickOffX = 0, m_pickOffY = 0;
+    PickStage m_pendingPickStage = PickStage::None; // stage to start after "Use Absolute"
+    std::string m_relDefaultAppliedId; // draft id that already got the Relative default
 
     // ── Key capture state ─────────────────────────────────────────────────────
     bool m_keyCaptureActive = false;
@@ -132,6 +138,11 @@ private:
     void RenderPickOverlay();
     void RenderSnipOverlay(Workflow& wf);
     void ApplyPickedCoords(int x, int y);
+    // Validates the target window (Relative mode), computes m_pickOff*, and
+    // returns false (showing the "No Window" dialog) if it cannot be resolved.
+    bool PrepareRelativePick(const Workflow& wf, PickStage stage);
+    void BeginPick(const Workflow& wf, PickStage stage);
+    void StartSnip();
     void RenderModal(Workflow& wf);
     void RenderActivityFields(ActivityData& data, const Workflow& wf);
 

@@ -5,6 +5,7 @@
 #endif
 #include "activity_editor.hpp"
 #include "window/pixel_checker.hpp"
+#include "window/window_finder.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include <algorithm>
@@ -153,6 +154,44 @@ static ActivityData DefaultData(int displayIdx) {
 static IPixelChecker* EditorPixelChecker() {
     static std::unique_ptr<IPixelChecker> s_checker = CreatePixelChecker();
     return s_checker.get();
+}
+
+// Shared window finder (used to resolve the target window for Relative picks)
+static IWindowFinder* EditorWindowFinder() {
+    static std::unique_ptr<IWindowFinder> s_finder = CreateWindowFinder();
+    return s_finder.get();
+}
+
+// Returns the pos_mode field of position-based activity types, nullptr otherwise.
+static PositionMode* PosModeOf(ActivityData& d) {
+    return std::visit([](auto&& v) -> PositionMode* {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T,MouseMoveActivity>   ||
+                      std::is_same_v<T,MouseClickActivity>   ||
+                      std::is_same_v<T,MouseDragActivity>    ||
+                      std::is_same_v<T,MouseScrollActivity>  ||
+                      std::is_same_v<T,PixelCheckActivity>   ||
+                      std::is_same_v<T,PixelRangeCheckActivity>)
+            return &v.pos_mode;
+        else
+            return nullptr;
+    }, d);
+}
+
+// Screen position of the target window's client origin. Mirrors
+// WorkflowEngine::ResolveCoords so picked coords round-trip at run time.
+static std::optional<std::pair<int,int>> TargetClientOrigin(const WindowTarget& wt) {
+    IWindowFinder* f = EditorWindowFinder();
+    if (!f) return std::nullopt;
+    std::optional<WindowInfo> info;
+    switch (wt.type) {
+        case WindowTarget::Type::ByTitle:  info = f->FindByTitle(wt.title);      break;
+        case WindowTarget::Type::ByClass:  info = f->FindByClass(wt.class_name); break;
+        case WindowTarget::Type::ByHandle: info = f->FindByHandle(wt.handle);    break;
+        default: return std::nullopt;
+    }
+    if (!info) return std::nullopt;
+    return f->ClientToScreen(info->handle, 0, 0);
 }
 
 static const char* BtnNames[]     = {"left","right","middle"};
@@ -1180,7 +1219,8 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
                 std::visit([&](auto&& v) {
                     using T = std::decay_t<decltype(v)>;
                     if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
-                        v.x1 = x1; v.y1 = y1; v.x2 = x2; v.y2 = y2;
+                        v.x1 = x1 - m_pickOffX; v.y1 = y1 - m_pickOffY;
+                        v.x2 = x2 - m_pickOffX; v.y2 = y2 - m_pickOffY;
                         v.sample_w = w; v.sample_h = h;
                         v.sample.clear(); v.sample.reserve(w * h);
                         for (int row = y1; row < y2 && row < m_snipH; ++row)
@@ -1253,11 +1293,14 @@ void ActivityEditorWidget::RenderPickOverlay() {
             lbl = "Click range start";
         else if (m_pickStage == PickStage::RangeTo)
             lbl = "Click range end";
-        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, gx, gy);
+        int rx = gx - m_pickOffX, ry = gy - m_pickOffY;
+        ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "%s: %d, %d", lbl, rx, ry);
+        if (m_pickOffX != 0 || m_pickOffY != 0)
+            ImGui::TextDisabled("(relative to target window; screen %d, %d)", gx, gy);
 
         if (m_pickStage == PickStage::RangeTo) {
             if (auto* pr = std::get_if<PixelRangeCheckActivity>(&m_draft.data))
-                ImGui::Text("Rect: %d x %d", std::abs(gx - pr->x1)+1, std::abs(gy - pr->y1)+1);
+                ImGui::Text("Rect: %d x %d", std::abs(rx - pr->x1)+1, std::abs(ry - pr->y1)+1);
         }
 
         bool isPixelPick = std::holds_alternative<PixelCheckActivity>(m_draft.data) ||
@@ -1290,7 +1333,7 @@ void ActivityEditorWidget::RenderPickOverlay() {
     if (m_pickStage == PickStage::DragTo) {
         if (auto* drag = std::get_if<MouseDragActivity>(&m_draft.data)) {
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
-            ImVec2 p1((float)drag->from_x, (float)drag->from_y);
+            ImVec2 p1((float)(drag->from_x + m_pickOffX), (float)(drag->from_y + m_pickOffY));
             ImVec2 p2 = ImGui::GetIO().MousePos;
             const ImU32 col = IM_COL32(255, 200, 50, 220);
             bg->AddCircleFilled(p1, 6.f, col);
@@ -1323,7 +1366,9 @@ void ActivityEditorWidget::RenderPickOverlay() {
     }
 }
 
-void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
+void ActivityEditorWidget::ApplyPickedCoords(int sx, int sy) {
+    // sx/sy are screen coords (used for sampling); x/y are what gets stored
+    int x = sx - m_pickOffX, y = sy - m_pickOffY;
     bool done = true;
     std::visit([&](auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -1333,7 +1378,7 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
             v.x = x; v.y = y;
         } else if constexpr (std::is_same_v<T,PixelCheckActivity>) {
             v.x = x; v.y = y;
-            v.color_rgb = EditorPixelChecker()->GetPixelRGB(x, y);
+            v.color_rgb = EditorPixelChecker()->GetPixelRGB(sx, sy);
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             if (m_pickStage == PickStage::DragFrom) {
                 v.from_x = x; v.from_y = y;
@@ -1350,8 +1395,8 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
             } else {
                 v.x2 = x; v.y2 = y;
                 // Capture sample from the picked rect
-                int left = std::min(v.x1, v.x2);
-                int top  = std::min(v.y1, v.y2);
+                int left = std::min(v.x1, v.x2) + m_pickOffX;
+                int top  = std::min(v.y1, v.y2) + m_pickOffY;
                 int w    = std::abs(v.x2 - v.x1) + 1;
                 int h    = std::abs(v.y2 - v.y1) + 1;
                 PixelBuffer buf = EditorPixelChecker()->CaptureRegion(left, top, w, h);
@@ -1370,6 +1415,40 @@ void ActivityEditorWidget::ApplyPickedCoords(int x, int y) {
     }
 }
 
+bool ActivityEditorWidget::PrepareRelativePick(const Workflow& wf, PickStage stage) {
+    m_pickOffX = m_pickOffY = 0;
+    PositionMode* pm = PosModeOf(m_draft.data);
+    if (!pm || *pm != PositionMode::Relative ||
+        wf.window.type == WindowTarget::Type::Global)
+        return true;
+    auto origin = TargetClientOrigin(wf.window);
+    if (!origin) {
+        m_pendingPickStage = stage;
+        m_showNoWindowDlg  = true;
+        return false;
+    }
+    m_pickOffX = origin->first;
+    m_pickOffY = origin->second;
+    return true;
+}
+
+void ActivityEditorWidget::BeginPick(const Workflow& wf, PickStage stage) {
+    if (!PrepareRelativePick(wf, stage)) return;
+    EnterFullscreenMode();
+    m_pickStage = stage;
+    ImGui::CloseCurrentPopup();
+}
+
+void ActivityEditorWidget::StartSnip() {
+    if (m_sdlWindow) {
+        SDL_GetWindowPosition(m_sdlWindow, &m_origWindowX, &m_origWindowY);
+        SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
+        SDL_HideWindow(m_sdlWindow);
+    }
+    m_snipStage = SnipStage::WaitMinimize;
+    ImGui::CloseCurrentPopup();
+}
+
 // ── Modal editor ──────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::RenderModal(Workflow& wf) {
@@ -1379,10 +1458,22 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
     ImGui::Text(m_editIdx < 0 ? "Add Activity" : "Edit Activity");
     ImGui::Separator();
 
+    // New position-based activities in a window-targeted workflow default to
+    // Relative so picked coords follow the target window.
+    auto applyRelDefault = [&]() {
+        if (m_editIdx >= 0 || wf.window.type == WindowTarget::Type::Global) return;
+        if (PositionMode* pm = PosModeOf(m_draft.data)) *pm = PositionMode::Relative;
+    };
+    if (m_relDefaultAppliedId != m_draft.id) {
+        m_relDefaultAppliedId = m_draft.id;
+        applyRelDefault();
+    }
+
     int dispIdx = VariantToDisplayIdx(m_draft.data);
     if (dispIdx < 0) dispIdx = 0; // hidden type (pixel_check) → show as first
     if (ImGui::Combo("Type", &dispIdx, kTypes, kNumTypes)) {
         m_draft.data       = DefaultData(dispIdx);
+        applyRelDefault();
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
         m_scrollAccum      = 0.f;
@@ -1473,26 +1564,16 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Random range (ms)", &dr);
             dm = std::max(0,dm); dr = std::max(0,dr);
         };
-        auto xyPick = [&](int& x, int& y, PickStage stage, PositionMode curPm) {
+        auto xyPick = [&](int& x, int& y, PickStage stage) {
             ImGui::SetNextItemWidth(120); ImGui::InputInt("X", &x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Y", &y);
-            if (ImGui::Button("Pick position##xy")) {
-                if (!isGlobal && curPm == PositionMode::Relative &&
-                    wf.window.title.empty() && wf.window.class_name.empty() &&
-                    wf.window.handle == 0) {
-                    m_showNoWindowDlg = true;
-                } else {
-                    EnterFullscreenMode();
-                    m_pickStage = stage;
-                    ImGui::CloseCurrentPopup();
-                }
-            }
+            if (ImGui::Button("Pick position##xy")) BeginPick(wf, stage);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click then hover over screen to pick");
         };
 
         if constexpr (std::is_same_v<T,MouseMoveActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
+            xyPick(v.x, v.y, PickStage::Single);
             ImGui::Checkbox("Smooth move", &v.smooth_move);
             if (v.smooth_move) {
                 ImGui::SetNextItemWidth(120);
@@ -1503,7 +1584,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
 
         } else if constexpr (std::is_same_v<T,MouseClickActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
+            xyPick(v.x, v.y, PickStage::Single);
             btnCombo(v.button);
             ImGui::Checkbox("Double click", &v.double_click);
             delayFields(v.delay_ms, v.delay_rand_ms);
@@ -1515,9 +1596,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::TextDisabled("  ----->");
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To X", &v.to_x);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("To Y", &v.to_y);
-            if (ImGui::Button("Pick drag##drag")) {
-                EnterFullscreenMode(); m_pickStage = PickStage::DragFrom; ImGui::CloseCurrentPopup();
-            }
+            if (ImGui::Button("Pick drag##drag")) BeginPick(wf, PickStage::DragFrom);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click start point, then click end point");
             btnCombo(v.button);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
@@ -1526,7 +1605,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
 
         } else if constexpr (std::is_same_v<T,MouseScrollActivity>) {
             posMode(v.pos_mode);
-            xyPick(v.x, v.y, PickStage::Single, v.pos_mode);
+            xyPick(v.x, v.y, PickStage::Single);
             ImGui::SetNextItemWidth(120); ImGui::InputInt("Delta X", &v.delta_x);
             if (m_scrollCapture) {
                 m_scrollAccum += ImGui::GetIO().MouseWheel;
@@ -1619,24 +1698,15 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             posMode(v.pos_mode);
 
             // Snip capture button (primary workflow) — hide app, screenshot, overlay
-            if (ImGui::Button("Capture region##prc")) {
-                if (m_sdlWindow) {
-                    SDL_GetWindowPosition(m_sdlWindow, &m_origWindowX, &m_origWindowY);
-                    SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
-                    SDL_HideWindow(m_sdlWindow);
-                }
-                m_snipStage = SnipStage::WaitMinimize;
-                ImGui::CloseCurrentPopup();
-            }
+            if (ImGui::Button("Capture region##prc") && PrepareRelativePick(wf, PickStage::None))
+                StartSnip();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Hide app, take screenshot, drag to select region and capture sample");
 
             ImGui::SameLine();
 
             // Manual coordinate + old-style pick (secondary)
-            if (ImGui::Button("Pick range##prc")) {
-                EnterFullscreenMode(); m_pickStage = PickStage::RangeFrom; ImGui::CloseCurrentPopup();
-            }
+            if (ImGui::Button("Pick range##prc")) BeginPick(wf, PickStage::RangeFrom);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick start then end corner (no screenshot)");
 
             ImGui::SetNextItemWidth(120); ImGui::InputInt("X1##prc", &v.x1);
@@ -1907,8 +1977,9 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
         m_showNoWindowDlg = false;
     }
     if (ImGui::BeginPopupModal("No Window##guard", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("No target window selected.");
-        ImGui::Text("Pick a window first, or switch to Absolute mode.");
+        ImGui::Text("Target window is not set or not currently open.");
+        ImGui::Text("Relative positions need the window to be visible.");
+        ImGui::Text("Open/pick the window first, or switch to Absolute mode.");
         ImGui::Separator();
         if (ImGui::Button("Use Absolute##grd", ImVec2(110,0))) {
             std::visit([](auto&& v) {
@@ -1921,9 +1992,14 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                               std::is_same_v<T,PixelRangeCheckActivity>)
                     v.pos_mode = PositionMode::Absolute;
             }, data);
-            // Then enter pick mode
-            EnterFullscreenMode();
-            m_pickStage = PickStage::Single;
+            // Then resume the pick/snip that was blocked (None = snip capture)
+            m_pickOffX = m_pickOffY = 0;
+            if (m_pendingPickStage == PickStage::None) {
+                StartSnip();
+            } else {
+                EnterFullscreenMode();
+                m_pickStage = m_pendingPickStage;
+            }
             ImGui::CloseCurrentPopup();
             ImGui::CloseCurrentPopup(); // Also close modal
         }

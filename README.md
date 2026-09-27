@@ -99,7 +99,7 @@ Click **`+ Add`** in the Activities section to open the activity editor modal. T
 | `run_workflow`   | Trigger another workflow by ID |
 | `system_action`  | Perform a system-level OS action: Shutdown, Restart, Sleep, Hibernate, Lock, or Log out. Optional **Force** flag skips save dialogs (Shutdown / Restart / Hibernate / Log out only). OS-specific: Windows uses `shutdown` / `rundll32`; Linux uses `systemctl` / `loginctl`; macOS uses `pmset` / `osascript`. |
 
-**Position mode**: `absolute` = screen coordinates. `relative` = coordinates within the target window's client area.
+**Position mode**: `absolute` = screen coordinates. `relative` = coordinates within the target window's client area. New position-based activities default to `relative` when the workflow has a target window. When picking in `relative` mode the target window must be open; picked screen points are converted to client-area offsets automatically.
 
 #### Picking a screen position
 
