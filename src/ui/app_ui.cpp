@@ -590,6 +590,9 @@ void AppUI::Render() {
         ImGui::SameLine();
 
         ImGui::BeginChild("##right", ImVec2(0, 0), true);
+        selIt =
+            std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
+                         [&](auto& w) { return w.id == m_selectedId; });
         if (selIt != m_config.workflows.end()) {
             RenderWorkflowPanel(*selIt);
         } else {
