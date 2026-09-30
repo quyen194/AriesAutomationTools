@@ -130,7 +130,7 @@ These must be called before any workflow starts. They are wired in `WorkflowEngi
 
 ## Config file
 
-`config.json` lives next to the EXE. Auto-saved on app exit if dirty. Manual save: Ctrl+S or `Save` button.
+`config.json` lives in `ConfigManager::DataDir()` (`%APPDATA%\AriesAutomationTools` on Windows, `~/Library/Application Support/...` on macOS, `$XDG_CONFIG_HOME`/`~/.config/...` on Linux), along with `imgui.ini`. If missing, `DefaultPath()` copies a legacy exe-side `config.json` there once. Auto-saved on app exit if dirty. Manual save: Ctrl+S or `Save` button.
 Colors stored as `"#RRGGBB"` hex strings. All activity types serialized in `config/config_manager.cpp`.
 
 ## File locations for common tasks

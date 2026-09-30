@@ -11,6 +11,13 @@ public:
     // Save config to file. Throws std::runtime_error on write failure.
     static void Save(const AppConfig& config, const std::string& path);
 
-    // Returns the default config path next to the executable.
+    // Per-user app data directory (created if missing):
+    //   Windows: %APPDATA%\AriesAutomationTools
+    //   macOS:   ~/Library/Application Support/AriesAutomationTools
+    //   Linux:   $XDG_CONFIG_HOME/AriesAutomationTools (or ~/.config/...)
+    static std::string DataDir();
+
+    // Returns <DataDir>/config.json. If it does not exist yet, a legacy
+    // config.json next to the executable is copied there first.
     static std::string DefaultPath();
 };

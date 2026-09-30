@@ -17,7 +17,7 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 - **Pause/Resume** — pause individual workflows or all at once without losing the current activity position; distinct from stopping
 - **Workflow status badges** — live indicators: `[~]` STARTING (cyan), `[R]` RUNNING (green), `[!]` INTERRUPTED by smart detection (orange), `[P]` PAUSED (yellow), `[W]` WAITING between repeats (teal)
 - **System tray** — minimize to tray with animated icon; right-click context menu for Show/Hide, Start/Stop/Pause/Resume All, and per-workflow controls
-- **Portable single EXE** — no installer, statically linked, config stored next to the exe as `config.json`; single-instance enforced
+- **Portable single EXE** — no installer, statically linked, config stored in the per-user app data folder (`%APPDATA%\AriesAutomationTools\config.json` on Windows); single-instance enforced
 
 ---
 
@@ -42,7 +42,7 @@ cmake --build build --config Release
 > If you cloned without `--recurse-submodules`, run `git submodule update --init --recursive` first.
 
 Executable: `build\Release\AriesAutomationTools.exe`
-Config file: `build\Release\config.json` (auto-copied on build)
+Config file: `%APPDATA%\AriesAutomationTools\config.json` (macOS: `~/Library/Application Support/AriesAutomationTools/`, Linux: `$XDG_CONFIG_HOME` or `~/.config/AriesAutomationTools/`). `imgui.ini` is stored there too.
 
 ### Linux
 
@@ -73,7 +73,7 @@ No extra dependencies needed — CoreGraphics, IOKit, Carbon are linked automati
 
 ### 1. Launching
 
-Run the executable. A `config.json` is loaded from the same folder. If it does not exist, the app starts with an empty config.
+Run the executable. `config.json` is loaded from the app data folder. On first run, if it does not exist there but a `config.json` sits next to the exe (older versions / the build copy), it is copied over; otherwise the app starts with an empty config.
 
 ### 2. Creating a Workflow
 
@@ -233,7 +233,7 @@ AriesAutomationTools/
 │   ├── SDL2/                   # SDL2 2.30.3 (git submodule)
 │   └── nlohmann_json/          # nlohmann/json 3.11.3 (git submodule)
 ├── assets/
-│   └── config.json             # Default config (copied next to exe on build)
+│   └── config.json             # Default config (copied next to exe on build; seeds app data on first run)
 └── src/
     ├── main.cpp                 # SDL2 + ImGui init, main loop
     │

@@ -4,13 +4,26 @@
 #include <sstream>
 #include <filesystem>
 
+#include <cstdlib>
+#include <system_error>
+
 #if defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <windows.h>
+#  include <shlobj.h>
 #elif defined(__APPLE__)
 #  include <mach-o/dyld.h>
+#  include <unistd.h>
+#  include <pwd.h>
 #else
 #  include <unistd.h>
 #  include <limits.h>
+#  include <pwd.h>
 #endif
 
 using json = nlohmann::ordered_json;
@@ -737,20 +750,60 @@ void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     f << root.dump(2);
 }
 
-std::string ConfigManager::DefaultPath() {
+// Legacy location (pre-AppData): config.json next to the executable.
+static fs::path ExeDir() {
 #if defined(_WIN32)
-    char buf[MAX_PATH];
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    return fs::path(buf).parent_path().string() + "/config.json";
+    wchar_t buf[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return fs::path(buf).parent_path();
 #elif defined(__APPLE__)
     char buf[1024];
     uint32_t size = sizeof(buf);
-    _NSGetExecutablePath(buf, &size);
-    return fs::path(buf).parent_path().string() + "/config.json";
+    if (_NSGetExecutablePath(buf, &size) != 0) return {};
+    return fs::path(buf).parent_path();
 #else
     char buf[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf)-1);
-    if (len != -1) buf[len] = '\0';
-    return fs::path(buf).parent_path().string() + "/config.json";
+    if (len == -1) return {};
+    buf[len] = ' ';
+    return fs::path(buf).parent_path();
 #endif
+}
+
+std::string ConfigManager::DataDir() {
+    fs::path dir;
+#if defined(_WIN32)
+    wchar_t buf[MAX_PATH] = {};
+    SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, buf);
+    dir = fs::path(buf) / "AriesAutomationTools";
+#elif defined(__APPLE__)
+    const char* home = getenv("HOME");
+    if (!home) home = getpwuid(getuid())->pw_dir;
+    dir = fs::path(home) / "Library" / "Application Support" / "AriesAutomationTools";
+#else
+    const char* xdg = getenv("XDG_CONFIG_HOME");
+    if (xdg && *xdg) {
+        dir = fs::path(xdg) / "AriesAutomationTools";
+    } else {
+        const char* home = getenv("HOME");
+        if (!home) home = getpwuid(getuid())->pw_dir;
+        dir = fs::path(home) / ".config" / "AriesAutomationTools";
+    }
+#endif
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return dir.string();
+}
+
+std::string ConfigManager::DefaultPath() {
+    fs::path cfg = fs::path(DataDir()) / "config.json";
+
+    // One-time migration: seed from the old exe-side config.json if present.
+    std::error_code ec;
+    if (!fs::exists(cfg, ec)) {
+        fs::path legacy = ExeDir() / "config.json";
+        if (!legacy.empty() && fs::exists(legacy, ec))
+            fs::copy_file(legacy, cfg, ec);
+    }
+    return cfg.string();
 }

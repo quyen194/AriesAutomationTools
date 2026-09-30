@@ -83,6 +83,10 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Keep imgui.ini with the rest of the app data (not the working directory)
+    static const std::string s_iniPath = ConfigManager::DataDir() + "/imgui.ini";
+    io.IniFilename = s_iniPath.c_str();
+
     // Style
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
