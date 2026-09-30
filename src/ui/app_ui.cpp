@@ -1246,24 +1246,28 @@ void AppUI::RenderLogPanel(float height) {
 
     ImGui::BeginChild("##logpanel", ImVec2(0, height - ImGui::GetStyle().ItemSpacing.y), true,
                       ImGuiWindowFlags_NoScrollbar);
-    if (ImGui::SmallButton(m_showLog ? "v Log" : "> Log")) m_showLog = !m_showLog;
+    // Toolbar: zero vertical frame padding so buttons, combo and input share
+    // the same (compact) height and fit the collapsed panel
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+    if (ImGui::Button(m_showLog ? "v Log" : "> Log")) m_showLog = !m_showLog;
     ImGui::SameLine();
     ImGui::TextDisabled("(%d)", (int)entries.size());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear##log")) {
+    if (ImGui::Button("Clear##log")) {
         Logger::Debug("User", "Log panel cleared");
         Logger::Clear();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear the entries shown here (log files are kept)");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Open log file") && !Logger::FilePath().empty()) {
+    if (ImGui::Button("Open log file") && !Logger::FilePath().empty()) {
         std::string url = "file:///" + Logger::FilePath();
         for (auto& c : url) if (c == '\\') c = '/';
         SDL_OpenURL(url.c_str());
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Logger::FilePath().c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Open log folder") && !Logger::Dir().empty()) {
+    if (ImGui::Button("Open log folder") && !Logger::Dir().empty()) {
         std::string url = "file:///" + Logger::Dir();
         for (auto& c : url) if (c == '\\') c = '/';
         SDL_OpenURL(url.c_str());
@@ -1274,11 +1278,13 @@ void AppUI::RenderLogPanel(float height) {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
+    ImGui::TextUnformatted("Level");
+    ImGui::SameLine();
     static const char* kLevels[]    = {"DEBUG", "INFO", "ERROR"};
     static const char* kLevelKeys[] = {"debug", "info", "error"};
     int lvl = m_config.log_level == "debug" ? 0 : m_config.log_level == "error" ? 2 : 1;
     ImGui::SetNextItemWidth(80);
-    if (ImGui::Combo("Level##log", &lvl, kLevels, 3)) {
+    if (ImGui::Combo("##loglevel", &lvl, kLevels, 3)) {
         Logger::Info("User", std::string("Log level set to ") + kLevels[lvl]);
         m_config.log_level = kLevelKeys[lvl];
         ApplyLogLevel();
@@ -1292,7 +1298,11 @@ void AppUI::RenderLogPanel(float height) {
 
     // Old log file cleanup
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(70);
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Keep");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
     if (ImGui::InputInt("days##logret", &m_config.log_retention_days)) {
         m_config.log_retention_days = std::clamp(m_config.log_retention_days, 0, 3650);
         m_dirty = true;
@@ -1300,7 +1310,7 @@ void AppUI::RenderLogPanel(float height) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("\"Clear old logs\" deletes log files older than this many days");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear old logs")) {
+    if (ImGui::Button("Clear old logs")) {
         int n = Logger::PurgeOldFiles(m_config.log_retention_days);
         Logger::Info("User", "Clear old logs (older than " + std::to_string(m_config.log_retention_days)
                      + " days): " + std::to_string(n) + " file(s) deleted");
@@ -1308,6 +1318,7 @@ void AppUI::RenderLogPanel(float height) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Delete log files older than %d days from\n%s",
                           m_config.log_retention_days, Logger::Dir().c_str());
+    ImGui::PopStyleVar();
 
     if (m_showLog) {
         ImGui::BeginChild("##logentries", ImVec2(0, 0), false,
