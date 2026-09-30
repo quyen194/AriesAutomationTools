@@ -77,6 +77,7 @@ struct TrayManager::Impl {
     HWND   hwnd  = nullptr;
     HICON  hIcon = nullptr;
     bool   added = false;
+    DWORD  lastToggleTick = 0;  // debounces left-click show/hide toggles
 
     std::vector<TrayWorkflowDesc> workflows;
     std::vector<TrayPendingAction> pending;
@@ -214,8 +215,15 @@ struct TrayManager::Impl {
             // With NOTIFYICON_VERSION_4: LOWORD(lParam) = event, HIWORD(lParam) = icon id.
             // Windows 7+ sends WM_CONTEXTMENU (not WM_RBUTTONUP) on right-click.
             // VERSION_4 also replaces WM_LBUTTONUP with NIN_SELECT on single left-click.
+            // A single click delivers BOTH WM_LBUTTONUP and NIN_SELECT (a double
+            // click adds WM_LBUTTONDBLCLK + another WM_LBUTTONUP), so toggling on
+            // each one showed and immediately re-hid the window. Collapse every
+            // left-click event within the double-click time into one toggle.
             UINT ev = LOWORD(lParam);
             if (ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP || ev == NIN_SELECT) {
+                DWORD now = GetTickCount();
+                if (now - self->lastToggleTick < GetDoubleClickTime()) return 0;
+                self->lastToggleTick = now;
                 self->pending.push_back({TrayAction::ShowWindow, ""});
             } else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU || ev == NIN_KEYSELECT) {
                 self->ShowContextMenu();
