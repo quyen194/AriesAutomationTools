@@ -242,7 +242,7 @@ Enable **Close to tray** via **File > Close to Tray** or the config to make the 
 AriesAutomationTools/
 ├── CMakeLists.txt              # Build definition
 ├── third_party/
-│   ├── imgui/                  # Dear ImGui v1.91.0 (git submodule)
+│   ├── imgui/                  # Dear ImGui 1.92.x docking branch (git submodule)
 │   ├── SDL2/                   # SDL2 2.30.3 (git submodule)
 │   └── nlohmann_json/          # nlohmann/json 3.11.3 (git submodule)
 ├── assets/
@@ -346,6 +346,6 @@ AriesAutomationTools/
 
 | Library | Version | Purpose |
 |---------|---------|---------|
-| [Dear ImGui](https://github.com/ocornut/imgui) | v1.91.0 | Immediate-mode UI |
-| [SDL2](https://github.com/libsdl-org/SDL) | 2.30.3 | Window, renderer, input (statically linked) |
+| [Dear ImGui](https://github.com/ocornut/imgui) | 1.92.x (docking) | Immediate-mode UI, multi-viewport (tooltips/overlays can leave the main window) |
+| [SDL2](https://github.com/libsdl-org/SDL) | 2.30.3 | Window, OpenGL context, input (statically linked) |
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | Config JSON serialization |

@@ -8,6 +8,8 @@
 #include "window/window_finder.hpp"
 #include "core/variables.hpp"
 #include "imgui.h"
+#include "ui/gl_texture.hpp"
+#include "ui/ui_util.hpp"
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
@@ -18,8 +20,12 @@
 
 // ── Destructor ────────────────────────────────────────────────────────────────
 ActivityEditorWidget::~ActivityEditorWidget() {
-    if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
     if (m_crosshairCursor)  { SDL_FreeCursor(m_crosshairCursor);      m_crosshairCursor = nullptr; }
+}
+
+void ActivityEditorWidget::ReleaseTextures() {
+    GlTexture::Destroy(m_samplePreviewTex);
+    m_samplePreviewHash = 0;
 }
 
 // ── UUID helper ───────────────────────────────────────────────────────────────
@@ -1202,7 +1208,7 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
     ImGuiIO& io = ImGui::GetIO();
 
     // Main full-screen transparent capture window (all events + drawing here)
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGuiWindowFlags flags =
@@ -1262,8 +1268,9 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
         } else {
             // Crosshair guide lines
             float mx = mp.x, my = mp.y;
-            dl->AddLine(ImVec2(0, my), ImVec2(sz.x, my), IM_COL32(255,255,255,80), 1.f);
-            dl->AddLine(ImVec2(mx, 0), ImVec2(mx, sz.y), IM_COL32(255,255,255,80), 1.f);
+            ImVec2 o = ImGui::GetMainViewport()->Pos;
+            dl->AddLine(ImVec2(o.x, my), ImVec2(o.x + sz.x, my), IM_COL32(255,255,255,80), 1.f);
+            dl->AddLine(ImVec2(mx, o.y), ImVec2(mx, o.y + sz.y), IM_COL32(255,255,255,80), 1.f);
         }
 
         // Instruction text (bottom-left)
@@ -1308,7 +1315,8 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Pos.x + ImGui::GetMainViewport()->Size.x - 260.f,
+                                        ImGui::GetMainViewport()->Pos.y + 8.f), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.88f);
         if (ImGui::Begin("##sniphud", nullptr, hudFlags)) {
             ImGui::TextDisabled("Overlay opacity");
@@ -1327,14 +1335,8 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
 
 // ── Coordinate + color picker overlay ────────────────────────────────────────
 void ActivityEditorWidget::RenderPickOverlay() {
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = io.MousePos;
-    pos.x += 16.f; pos.y += 16.f;
-    // Clamp to screen (both upper and lower bounds)
-    if (pos.x + 240 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 240;
-    if (pos.y + 110 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 110;
-    if (pos.x < 0) pos.x = 0;
-    if (pos.y < 0) pos.y = 0;
+    // Follows the cursor, clamped to the monitor under it (multi-viewport)
+    ImVec2 pos = CursorPanelPos(ImVec2(240, 110));
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(1.0f);
@@ -1412,7 +1414,8 @@ void ActivityEditorWidget::RenderPickOverlay() {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
-        ImGui::SetNextWindowPos(ImVec2(io2.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Pos.x + ImGui::GetMainViewport()->Size.x - 260.f,
+                                        ImGui::GetMainViewport()->Pos.y + 8.f), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.88f);
         if (ImGui::Begin("##pickhud", nullptr, hudFlags)) {
             ImGui::TextDisabled("Overlay opacity");
@@ -1877,28 +1880,21 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 ImGui::SameLine();
                 if (ImGui::Button("Clear##prc")) {
                     v.sample.clear(); v.sample_w = v.sample_h = 0;
-                    if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
+                    GlTexture::Destroy(m_samplePreviewTex);
                     m_samplePreviewHash = 0;
                 }
 
                 // Rebuild preview texture when sample changes
-                if (m_sdlRenderer && v.sample_w > 0 && v.sample_h > 0) {
+                if (v.sample_w > 0 && v.sample_h > 0) {
                     size_t hash = (size_t)v.sample_w * 100003u
                                 + (size_t)v.sample_h * 10007u
                                 + v.sample.size();
                     if (hash != m_samplePreviewHash || !m_samplePreviewTex) {
-                        if (m_samplePreviewTex) { SDL_DestroyTexture(m_samplePreviewTex); m_samplePreviewTex = nullptr; }
-                        SDL_Texture* tex = SDL_CreateTexture(m_sdlRenderer,
-                            SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
-                            v.sample_w, v.sample_h);
-                        if (tex) {
-                            std::vector<uint32_t> argb(v.sample.size());
-                            for (size_t i = 0; i < v.sample.size(); ++i)
-                                argb[i] = 0xFF000000u | v.sample[i];
-                            SDL_UpdateTexture(tex, nullptr, argb.data(), v.sample_w * 4);
-                            m_samplePreviewTex = tex;
-                            m_samplePreviewHash = hash;
-                        }
+                        GlTexture::Destroy(m_samplePreviewTex);
+                        if (v.sample.size() >= (size_t)v.sample_w * v.sample_h)
+                            m_samplePreviewTex = GlTexture::CreateFromRGB(v.sample.data(),
+                                v.sample_w, v.sample_h);
+                        if (m_samplePreviewTex) m_samplePreviewHash = hash;
                     }
                     if (m_samplePreviewTex) {
                         const float maxSz = 64.f;

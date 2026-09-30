@@ -11,7 +11,6 @@
 #include <string>
 
 struct SDL_Window;
-struct SDL_Texture;
 struct SDL_Cursor;
 
 class AppUI {
@@ -71,7 +70,7 @@ private:
     bool                   m_dirty = false;
 
     SDL_Window*            m_sdlWindow  = nullptr;
-    SDL_Texture*           m_iconTexture = nullptr;
+    unsigned int           m_iconTexture = 0;       // GL texture id
     bool                   m_windowVisible = true;
     bool                   m_showAbout  = false;
 
@@ -134,7 +133,7 @@ private:
     int                   m_trigSnipOrigW    = 0, m_trigSnipOrigH    = 0;
     SDL_Cursor*           m_trigCrosshairCursor = nullptr;
     SDL_Cursor*           m_trigOrigCursor      = nullptr;
-    SDL_Texture*          m_trigSampleTex    = nullptr;
+    unsigned int          m_trigSampleTex    = 0;   // GL texture id
     size_t                m_trigSampleHash   = 0;
     void RenderTriggerSnipOverlay();
 

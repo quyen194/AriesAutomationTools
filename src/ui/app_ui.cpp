@@ -5,7 +5,8 @@
 #include "imgui.h"
 #include <SDL.h>
 #include "icon_data.hpp"
-#include "imgui_impl_sdlrenderer2.h"
+#include "gl_texture.hpp"
+#include "ui_util.hpp"
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -123,7 +124,6 @@ static std::string GenId() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 AppUI::~AppUI() {
-    if (m_trigSampleTex)      { SDL_DestroyTexture(m_trigSampleTex);      m_trigSampleTex      = nullptr; }
     if (m_trigCrosshairCursor){ SDL_FreeCursor(m_trigCrosshairCursor);    m_trigCrosshairCursor= nullptr; }
 }
 
@@ -205,7 +205,7 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     ApplyPauseAllHotkey(m_config.pause_all_hotkey);
     ApplyResumeAllHotkey(m_config.resume_all_hotkey);
     m_actEditor.SetWorkflows(&m_config.workflows);
-    m_actEditor.SetSDLContext(sdlWindow, SDL_GetRenderer(sdlWindow));
+    m_actEditor.SetSDLContext(sdlWindow);
     m_actEditor.SetOverlayOpacity(&m_config.pick_overlay_opacity);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
@@ -225,21 +225,15 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     m_tray.Init(kIconPixels, 32, 32);
     UpdateTrayWorkflows();
 
-    // Build an SDL texture for the About dialog icon display
-    SDL_Renderer* renderer = SDL_GetRenderer(sdlWindow);
-    if (renderer) {
-        SDL_Surface* surf = SDL_CreateRGBSurfaceFrom(
-            const_cast<uint8_t*>(kIconPixels), 32, 32, 32, 32*4,
-            0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000);
-        if (surf) {
-            m_iconTexture = SDL_CreateTextureFromSurface(renderer, surf);
-            SDL_FreeSurface(surf);
-        }
-    }
+    // Build a GL texture for the About dialog icon display (RGBA bytes)
+    m_iconTexture = GlTexture::CreateRGBA(kIconPixels, 32, 32);
 }
 
 void AppUI::Shutdown() {
-    if (m_iconTexture) { SDL_DestroyTexture(m_iconTexture); m_iconTexture = nullptr; }
+    // GL textures must be freed while the GL context is alive
+    GlTexture::Destroy(m_iconTexture);
+    GlTexture::Destroy(m_trigSampleTex);
+    m_actEditor.ReleaseTextures();
     m_tray.Shutdown();
     m_triggers.Stop();
     m_engine.Shutdown();
@@ -539,8 +533,9 @@ void AppUI::Render() {
 
     if (!overlayActive) {
         ImGuiIO& io = ImGui::GetIO();
-        ImGui::SetNextWindowPos(ImVec2(0,0));
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
         ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
         ImGuiWindowFlags mainFlags =
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoBringToFrontOnFocus |
@@ -632,7 +627,7 @@ void AppUI::RenderTriggerSnipOverlay() {
     ImGuiIO& io = ImGui::GetIO();
 
     // Main full-screen transparent capture window (all events + drawing)
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGuiWindowFlags flags =
@@ -686,8 +681,9 @@ void AppUI::RenderTriggerSnipOverlay() {
             dl->AddText(ImVec2((float)x1+4,(float)y2+4), IM_COL32(255,255,255,255), sizeLabel);
         } else {
             float mx = mp.x, my = mp.y;
-            dl->AddLine(ImVec2(0,my), ImVec2(sz.x,my), IM_COL32(255,255,255,80), 1.f);
-            dl->AddLine(ImVec2(mx,0), ImVec2(mx,sz.y), IM_COL32(255,255,255,80), 1.f);
+            ImVec2 o = ImGui::GetMainViewport()->Pos;
+            dl->AddLine(ImVec2(o.x,my), ImVec2(o.x+sz.x,my), IM_COL32(255,255,255,80), 1.f);
+            dl->AddLine(ImVec2(mx,o.y), ImVec2(mx,o.y+sz.y), IM_COL32(255,255,255,80), 1.f);
         }
 
         // Instruction text (bottom-left)
@@ -732,7 +728,8 @@ void AppUI::RenderTriggerSnipOverlay() {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Pos.x + ImGui::GetMainViewport()->Size.x - 260.f,
+                                        ImGui::GetMainViewport()->Pos.y + 8.f), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.88f);
         if (ImGui::Begin("##trigsniphud", nullptr, hudFlags)) {
             ImGui::TextDisabled("Overlay opacity");
@@ -1201,13 +1198,8 @@ void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {
 }
 
 void AppUI::RenderTriggerPickOverlay() {
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = io.MousePos;
-    pos.x += 16.f; pos.y += 16.f;
-    if (pos.x + 260 > io.DisplaySize.x) pos.x = io.DisplaySize.x - 260;
-    if (pos.y + 100 > io.DisplaySize.y) pos.y = io.DisplaySize.y - 100;
-    if (pos.x < 0) pos.x = 0;
-    if (pos.y < 0) pos.y = 0;
+    // Follows the cursor anywhere on the desktop (multi-viewport)
+    ImVec2 pos = CursorPanelPos(ImVec2(260, 100));
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -1300,7 +1292,8 @@ void AppUI::RenderTriggerPickOverlay() {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
-        ImGui::SetNextWindowPos(ImVec2(hudIo.DisplaySize.x - 260.f, 8.f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Pos.x + ImGui::GetMainViewport()->Size.x - 260.f,
+                                        ImGui::GetMainViewport()->Pos.y + 8.f), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.88f);
         if (ImGui::Begin("##trigpickhud", nullptr, hudFlags)) {
             ImGui::TextDisabled("Overlay opacity");
@@ -1455,30 +1448,22 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
             if (ImGui::Button("Clear##tr")) {
                 trig.pixel_sample.clear();
                 trig.pixel_sample_w = trig.pixel_sample_h = 0;
-                if (m_trigSampleTex) { SDL_DestroyTexture(m_trigSampleTex); m_trigSampleTex = nullptr; }
+                GlTexture::Destroy(m_trigSampleTex);
                 m_trigSampleHash = 0;
                 m_dirty = true;
             }
 
             // Rebuild preview texture when sample changes
-            SDL_Renderer* renderer = SDL_GetRenderer(m_sdlWindow);
-            if (renderer && trig.pixel_sample_w > 0 && trig.pixel_sample_h > 0) {
+            if (trig.pixel_sample_w > 0 && trig.pixel_sample_h > 0) {
                 size_t hash = (size_t)trig.pixel_sample_w * 100003u
                             + (size_t)trig.pixel_sample_h * 10007u
                             + trig.pixel_sample.size();
                 if (hash != m_trigSampleHash || !m_trigSampleTex) {
-                    if (m_trigSampleTex) { SDL_DestroyTexture(m_trigSampleTex); m_trigSampleTex = nullptr; }
-                    SDL_Texture* tex = SDL_CreateTexture(renderer,
-                        SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
-                        trig.pixel_sample_w, trig.pixel_sample_h);
-                    if (tex) {
-                        std::vector<uint32_t> argb(trig.pixel_sample.size());
-                        for (size_t i = 0; i < trig.pixel_sample.size(); ++i)
-                            argb[i] = 0xFF000000u | trig.pixel_sample[i];
-                        SDL_UpdateTexture(tex, nullptr, argb.data(), trig.pixel_sample_w * 4);
-                        m_trigSampleTex  = tex;
-                        m_trigSampleHash = hash;
-                    }
+                    GlTexture::Destroy(m_trigSampleTex);
+                    if (trig.pixel_sample.size() >= (size_t)trig.pixel_sample_w * trig.pixel_sample_h)
+                        m_trigSampleTex = GlTexture::CreateFromRGB(trig.pixel_sample.data(),
+                            trig.pixel_sample_w, trig.pixel_sample_h);
+                    if (m_trigSampleTex) m_trigSampleHash = hash;
                 }
                 if (m_trigSampleTex) {
                     const float maxSz = 64.f;

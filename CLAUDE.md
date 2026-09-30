@@ -146,7 +146,7 @@ Colors stored as `"#RRGGBB"` hex strings. All activity types serialized in `conf
 
 ## Dependencies (git submodules in `third_party/`)
 
-- Dear ImGui v1.91.0 — `${imgui_SOURCE_DIR}` in CMakeLists
+- Dear ImGui 1.92.x **docking** branch — `${IMGUI_DIR}` in CMakeLists. Renderer: `imgui_impl_sdl2` + `imgui_impl_opengl3` with `ImGuiConfigFlags_ViewportsEnable` (SDLRenderer2 backend has no multi-viewport support). With viewports on, ImGui coords are absolute desktop coords: anchor panels to `ImGui::GetMainViewport()->Pos`, not `(0,0)`. Preview images use GL textures via `src/ui/gl_texture.hpp`.
 - SDL2 2.30.3 — static, `SDL2::SDL2-static` + `SDL2::SDL2main`
 - nlohmann/json 3.11.3 — header-only, `nlohmann_json::nlohmann_json`
 

@@ -42,7 +42,18 @@ void WindowPickerWidget::Render(IWindowFinder* finder, const WindowTarget& curre
         ImGui::PopStyleColor();
 
         if (finder) {
-            m_hover = finder->WindowUnderCursor();
+            // The info tooltip is its own OS window (multi-viewport) and can follow
+            // the cursor outside the app; never pick one of our own viewport windows.
+            auto under = finder->WindowUnderCursor();
+            bool ownWindow = false;
+            if (under) {
+                for (ImGuiViewport* vp : ImGui::GetPlatformIO().Viewports)
+                    if (vp->PlatformHandleRaw &&
+                        (uint64_t)(uintptr_t)vp->PlatformHandleRaw == under->handle) {
+                        ownWindow = true; break;
+                    }
+            }
+            m_hover = ownWindow ? std::nullopt : under;
             if (m_hover) {
                 ImGui::BeginTooltip();
                 ImGui::Text("Title:  %s", m_hover->title.c_str());

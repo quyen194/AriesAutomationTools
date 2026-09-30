@@ -72,7 +72,7 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
 # ── Windows resource file (EXE icon + version info) ──────────────────────────
@@ -97,6 +97,7 @@ add_executable(AriesAutomationTools
     src/input/key_map.cpp
     src/config/config_manager.cpp
     src/ui/app_ui.cpp
+    src/ui/gl_texture.cpp
     src/ui/widgets/workflow_list.cpp
     src/ui/widgets/activity_editor.cpp
     src/ui/widgets/window_picker.cpp
@@ -116,10 +117,15 @@ target_include_directories(AriesAutomationTools PRIVATE
     ${IMGUI_DIR}/backends
 )
 
+# OpenGL renderer (imgui_impl_opengl3) — needed for multi-viewport support,
+# which lets ImGui tooltips/overlays render outside the main window
+find_package(OpenGL REQUIRED)
+
 target_link_libraries(AriesAutomationTools PRIVATE
     SDL2::SDL2-static
     SDL2::SDL2main
     nlohmann_json::nlohmann_json
+    OpenGL::GL
 )
 
 if(APPLE)

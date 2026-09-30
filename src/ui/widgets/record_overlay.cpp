@@ -101,7 +101,8 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
     if (!m_windowOpen && !engine.IsRecording() && !m_showReview) return;
 
     ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 290, 10), ImGuiCond_Always);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - 290, vp->Pos.y + 10), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.85f);
     ImGuiWindowFlags flags =

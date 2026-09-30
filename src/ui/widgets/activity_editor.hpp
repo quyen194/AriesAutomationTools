@@ -8,8 +8,6 @@
 #include <map>
 
 struct SDL_Window;
-struct SDL_Renderer;
-struct SDL_Texture;
 struct SDL_Cursor;
 
 struct ActivityEditorWidget {
@@ -18,9 +16,9 @@ struct ActivityEditorWidget {
     ~ActivityEditorWidget();
 
     void SetWorkflows(const std::vector<Workflow>* wfs) { m_workflows = wfs; }
-    void SetSDLContext(SDL_Window* window, SDL_Renderer* renderer) {
-        m_sdlWindow = window; m_sdlRenderer = renderer;
-    }
+    void SetSDLContext(SDL_Window* window) { m_sdlWindow = window; }
+    // Frees GL textures; call while the GL context is still alive
+    void ReleaseTextures();
     void SetOverlayOpacity(float* p) { m_pOverlayOpacity = p; }
 
     // currentStep: index of the currently executing top-level activity (-1 = not running)
@@ -109,7 +107,6 @@ private:
 
     // ── SDL fullscreen overlay (shared by pick + snip) ────────────────────────
     SDL_Window*   m_sdlWindow   = nullptr;
-    SDL_Renderer* m_sdlRenderer = nullptr;
     float*        m_pOverlayOpacity = nullptr; // points to AppConfig::pick_overlay_opacity
     int m_origWindowX = 0, m_origWindowY = 0;
     int m_origWindowW = 0, m_origWindowH = 0; // 0 = not in fullscreen mode
@@ -128,7 +125,7 @@ private:
     int          m_snipX2     = 0, m_snipY2     = 0;
     bool         m_snipDragging = false;
     // ── Sample image preview texture ──────────────────────────────────────────
-    SDL_Texture* m_samplePreviewTex  = nullptr;
+    unsigned int m_samplePreviewTex  = 0;   // GL texture id
     size_t       m_samplePreviewHash = 0;
 
     // ── Variables (recomputed every frame while the modal is open) ────────────
