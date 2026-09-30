@@ -215,6 +215,11 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
 
     if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
 
+    // Auto-start workflows flagged to run on launch (smart detection still
+    // defers the actual start until the user is idle)
+    for (auto& wf : m_config.workflows)
+        if (wf.enabled && wf.auto_start) m_engine.StartWorkflow(wf.id);
+
     m_tray.Init(kIconPixels, 32, 32);
     UpdateTrayWorkflows();
 
@@ -906,6 +911,10 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     ImGui::SameLine();
     if (ImGui::Checkbox("Enabled", &wf.enabled)) m_dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable or disable this workflow");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Auto start", &wf.auto_start)) m_dirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Start this workflow automatically when the app launches");
 
     bool running      = m_engine.IsRunning(wf.id);
     bool paused       = m_engine.IsPaused(wf.id);

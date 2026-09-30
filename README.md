@@ -11,6 +11,7 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 - **11 activity types** — mouse move, click, drag, scroll; key press, type string, wait, pixel check, pixel range check (region/image compare), run workflow, system action
 - **Window targeting** — run actions on the global screen or scoped to a specific window (by title, class, or spy-pick)
 - **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period; optional start-delay waits until the system is idle before launching
+- **Auto start** — per-workflow checkbox (next to *Enabled*) that starts the workflow automatically when the app launches
 - **Record mode** — global hook captures real mouse/keyboard actions, review and append to any workflow
 - **3 start triggers** — Manual, Schedule (cron), or Pixel color watch
 - **Per-workflow & global hotkeys** — bind Start / Stop / Pause / Resume to OS-level hotkeys per workflow, plus global Start All / Stop All / Pause All / Resume All / Start Rec / Stop Rec hotkeys

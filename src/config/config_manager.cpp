@@ -576,6 +576,7 @@ static json SerializeWorkflow(const Workflow& w) {
     j["smart_detection_idle_ms"]          = w.smart_detection_idle_ms;
     j["smart_detection_start_delay_ms"]   = w.smart_detection_start_delay_ms;
     j["smart_detection_pause_on_lock"]    = w.smart_detection_pause_on_lock;
+    j["auto_start"]                       = w.auto_start;
 
     json win;
     switch (w.window.type) {
@@ -635,6 +636,7 @@ static Workflow DeserializeWorkflow(const json& j) {
     w.smart_detection_idle_ms            = j.value("smart_detection_idle_ms", 2000);
     w.smart_detection_start_delay_ms     = j.value("smart_detection_start_delay_ms", 1000);
     w.smart_detection_pause_on_lock      = j.value("smart_detection_pause_on_lock", false);
+    w.auto_start                         = j.value("auto_start", false);
 
     if (j.contains("window")) {
         auto& win = j["window"];
