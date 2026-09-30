@@ -1004,6 +1004,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
             { wf.smart_detection_start_delay_ms = std::max(100, wf.smart_detection_start_delay_ms); m_dirty = true; }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Wait this many ms of user inactivity before the workflow starts");
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Pause on lock##sd", &wf.smart_detection_pause_on_lock)) m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Suspend the workflow while the computer is locked (Win+L),\n"
+                              "and hold any pending start until it is unlocked.");
     }
 
     ImGui::Separator();

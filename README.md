@@ -196,6 +196,8 @@ When **Smart detection** is enabled, all running workflows pause automatically w
 
 **Start delay (ms)** — when set, clicking Start does not launch the workflow immediately. Instead it enters a `[~]` STARTING state and waits until the system has been idle for at least that many milliseconds. Any user input during this window resets the wait. A `[Cancel]` button appears in place of Start while waiting.
 
+**Pause on lock** — when checked, the workflow is suspended (`[!]` INTERRUPTED) while the computer is locked (e.g. Win+L) and a pending start is held until the session is unlocked. Windows only; other platforms never report a locked session.
+
 This prevents the tool from fighting with your own mouse/keyboard during active use.
 
 ### 8. Running and Stopping

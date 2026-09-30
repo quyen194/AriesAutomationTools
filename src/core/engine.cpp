@@ -258,6 +258,7 @@ void WorkflowEngine::MonitorLoop() {
 
         if (!m_monitor) continue;
         uint64_t idle_ms = m_monitor->MillisSinceLastUserActivity();
+        bool     locked  = m_monitor->IsSessionLocked();
 
         int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -272,8 +273,10 @@ void WorkflowEngine::MonitorLoop() {
                 std::lock_guard<std::mutex> lk(m_pendingMutex);
                 pending = m_pendingStarts[i];
             }
+            bool lockBlocked = locked && wf.smart_detection_pause_on_lock;
             if (pending && !sc->IsRunning()) {
-                if (idle_ms >= (uint64_t)wf.smart_detection_start_delay_ms) {
+                // Hold the pending start while the session is locked (if enabled)
+                if (!lockBlocked && idle_ms >= (uint64_t)wf.smart_detection_start_delay_ms) {
                     {
                         std::lock_guard<std::mutex> lk(m_pendingMutex);
                         m_pendingStarts[i] = false;
@@ -291,7 +294,8 @@ void WorkflowEngine::MonitorLoop() {
             // This prevents the "Start" button click itself from immediately
             // triggering a suspension.
             bool active_after_start = last_active_ms > sc->GetStartTimeMs();
-            sc->SetSuspended(active_after_start && idle_ms < (uint64_t)wf.smart_detection_idle_ms);
+            sc->SetSuspended(lockBlocked ||
+                             (active_after_start && idle_ms < (uint64_t)wf.smart_detection_idle_ms));
         }
     }
 }

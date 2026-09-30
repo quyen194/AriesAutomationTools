@@ -265,6 +265,7 @@ struct Workflow {
     bool        smart_detection      = true;
     int         smart_detection_idle_ms           = 2000;
     int         smart_detection_start_delay_ms    = 1000;
+    bool        smart_detection_pause_on_lock     = false;  // suspend while the session is locked
     WindowTarget  window;
     StartTrigger  trigger;
     std::vector<Activity> activities;

@@ -69,6 +69,20 @@ public:
         DWORD last = s_lastRealInputTick.load(std::memory_order_relaxed);
         return (uint64_t)(now - last);
     }
+
+    bool IsSessionLocked() override {
+        // While locked, the input desktop switches to "Winlogon" (secure desktop)
+        // and a normal process can no longer open it.
+        HDESK desk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+        if (!desk) return true;
+        wchar_t name[64]{};
+        DWORD   needed = 0;
+        bool locked = false;
+        if (GetUserObjectInformationW(desk, UOI_NAME, name, sizeof(name), &needed))
+            locked = _wcsicmp(name, L"Default") != 0;
+        CloseDesktop(desk);
+        return locked;
+    }
 };
 
 std::unique_ptr<IActivityMonitor> CreateActivityMonitor() {
