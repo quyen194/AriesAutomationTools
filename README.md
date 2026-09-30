@@ -12,7 +12,7 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 - **Window targeting** — run actions on the global screen or scoped to a specific window (by title, class, or spy-pick)
 - **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period; optional start-delay waits until the system is idle before launching
 - **Variables** — Set Variable / Loop iteration / Get Mouse Position store runtime variables; any field of any activity can take its value from a variable instead of a fixed value; a **Variables** window shows every variable and its current value
-- **Run log** — bottom Log panel plus `aries.log` in the app data folder; a runtime error (e.g. a number field bound to a text variable) stops the workflow as **TERMINATED**, highlights the failing step and logs the exact cause
+- **Logging** — bottom Log panel plus hourly log files `logs/aries_automation_tools_YYYYMMDD_HH.log` in the app data folder. Levels: **DEBUG** (full trace: every executed activity, resolved coordinates, pixel results, branches, variables, triggers, smart detection), **INFO** (user operations: create/edit/delete workflows and activities — each config edit is logged as a field-level change —, start/stop/pause, save, record, hotkeys; plus workflow started/finished), **ERROR**. The file level and the retention for **Clear old logs** (default 7 days) are set in the Log panel; a runtime error (e.g. a number field bound to a text variable) stops the workflow as **TERMINATED**, highlights the failing step and logs the exact cause
 - **Auto start** — per-workflow checkbox (next to *Enabled*) that starts the workflow automatically when the app launches
 - **Record mode** — global hook captures real mouse/keyboard actions, review and append to any workflow
 - **3 start triggers** — Manual, Schedule (cron), or Pixel color watch
@@ -220,7 +220,7 @@ This prevents the tool from fighting with your own mouse/keyboard during active 
 - **`>> Start All`** / **`[Stop All]`** / **`|| Pause All`** / **`> Resume All`** — apply to all workflows at once (also available in the **Workflows** menu and the tray context menu).
 - **F9** (or your configured hotkey) — if any workflows are running, toggles global pause/resume; if none are running, starts all enabled workflows.
 
-**Status badges** in the workflow list show live state: `[~]` STARTING · `[R]` RUNNING · `[W]` WAITING (between repeats) · `[!]` INTERRUPTED (smart detection) · `[P]` PAUSED · `[X]` TERMINATED (runtime error; the failing step is highlighted red and the cause is shown in the Log panel and `aries.log`).
+**Status badges** in the workflow list show live state: `[~]` STARTING · `[R]` RUNNING · `[W]` WAITING (between repeats) · `[!]` INTERRUPTED (smart detection) · `[P]` PAUSED · `[X]` TERMINATED (runtime error; the failing step is highlighted red and the cause is shown in the Log panel and the log file).
 
 **Hotkeys** — open the **Hotkey Configuration** window to bind per-workflow Start/Stop/Pause/Resume hotkeys and global action hotkeys (Start All, Stop All, Pause All, Resume All, Start Rec, Stop Rec).
 
@@ -255,7 +255,8 @@ AriesAutomationTools/
     │   ├── engine.hpp/cpp       # WorkflowEngine: owns schedulers, smart-detection monitor thread
     │   ├── scheduler.hpp/cpp    # Per-workflow background thread, executes activity sequence
     │   ├── variables.hpp        # Variable-bindable field table, strict int parsing, variable name discovery
-    │   ├── logger.hpp/cpp       # Thread-safe log (Log panel + aries.log)
+    │   ├── logger.hpp/cpp       # Thread-safe log (Log panel + hourly files in logs/, DEBUG/INFO/ERROR)
+    │   ├── activity_summary.hpp/cpp # One-line activity description (activity list + log)
     │   ├── record_engine.hpp/cpp# Global WH_MOUSE_LL/WH_KEYBOARD_LL hook capture (Windows)
     │   └── trigger_manager.hpp/cpp # 500ms poll loop for Schedule and Pixel triggers
     │
@@ -286,7 +287,8 @@ AriesAutomationTools/
     │   └── macos/macos_hotkey.cpp  # CGEventTap
     │
     ├── config/
-    │   └── config_manager.hpp/cpp  # JSON load/save (nlohmann/json), all 11 activity types
+    │   ├── config_manager.hpp/cpp  # JSON load/save (nlohmann/json), all 11 activity types
+    │   └── config_diff.hpp/cpp     # Field-level config diff (logs user edits)
     │
     └── ui/
         ├── app_ui.hpp/cpp       # Top-level layout, wires all widgets and engine

@@ -758,6 +758,8 @@ AppConfig ConfigManager::Load(const std::string& path) {
     cfg.minimize_to_tray      = root.value("minimize_to_tray",      false);
     cfg.single_instance       = root.value("single_instance",       true);
     cfg.pick_overlay_opacity  = root.value("pick_overlay_opacity",  0.35f);
+    cfg.log_level             = root.value("log_level",             std::string("info"));
+    cfg.log_retention_days    = root.value("log_retention_days",    7);
 
     if (root.contains("workflows")) {
         for (auto& wj : root["workflows"])
@@ -767,7 +769,7 @@ AppConfig ConfigManager::Load(const std::string& path) {
     return cfg;
 }
 
-void ConfigManager::Save(const AppConfig& config, const std::string& path) {
+json ConfigManager::ToJson(const AppConfig& config) {
     json root;
     root["start_record_hotkey"] = config.start_record_hotkey;
     root["stop_record_hotkey"]  = config.stop_record_hotkey;
@@ -779,11 +781,17 @@ void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     root["minimize_to_tray"]     = config.minimize_to_tray;
     root["single_instance"]      = config.single_instance;
     root["pick_overlay_opacity"] = config.pick_overlay_opacity;
+    root["log_level"]            = config.log_level;
+    root["log_retention_days"]   = config.log_retention_days;
 
     json wfs = json::array();
     for (auto& w : config.workflows) wfs.push_back(SerializeWorkflow(w));
     root["workflows"] = wfs;
+    return root;
+}
 
+void ConfigManager::Save(const AppConfig& config, const std::string& path) {
+    json root = ToJson(config);
     std::ofstream f(path);
     if (!f.is_open()) throw std::runtime_error("Cannot write config: " + path);
     f << root.dump(2);

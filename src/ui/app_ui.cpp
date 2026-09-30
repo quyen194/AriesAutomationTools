@@ -2,6 +2,7 @@
 #include "version.h"
 #include "core/logger.hpp"
 #include "core/variables.hpp"
+#include "config/config_diff.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include "icon_data.hpp"
@@ -134,7 +135,10 @@ AppUI::AppUI() {
         m_confirmDeleteWfId = id;
         m_pendingConfirmWf  = true;
     };
-    m_wfList.OnSelect = [this](const std::string& id) { m_selectedId = id; };
+    m_wfList.OnSelect = [this](const std::string& id) {
+        if (id != m_selectedId) Logger::Debug("User", "Selected workflow \"" + WfName(id) + "\"");
+        m_selectedId = id;
+    };
 
     m_actEditor.OnChanged = [this]() {
         m_engine.SetWorkflows(m_config.workflows);
@@ -149,6 +153,8 @@ AppUI::AppUI() {
         it->window.title      = info.title;
         it->window.class_name = info.class_name;
         it->window.handle     = info.handle;
+        Logger::Info("User", "Window picked for \"" + it->name + "\": title \"" + info.title
+                     + "\", class \"" + info.class_name + "\"");
         m_dirty = true;
     };
 
@@ -156,6 +162,7 @@ AppUI::AppUI() {
         auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
                                [&](auto& w){ return w.id == m_selectedId; });
         if (it == m_config.workflows.end()) return;
+        Logger::Info(it->name, "Appended " + std::to_string(acts.size()) + " recorded activities");
         for (auto& a : acts) it->activities.push_back(std::move(a));
         m_engine.SetWorkflows(m_config.workflows);
         m_dirty = true;
@@ -183,7 +190,13 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     m_sdlWindow  = sdlWindow;
     try {
         m_config = ConfigManager::Load(config_path);
-    } catch (...) {}
+        Logger::Info("App", "Config loaded: " + config_path + " (" + std::to_string(m_config.workflows.size())
+                     + " workflows)");
+    } catch (const std::exception& e) {
+        Logger::Error("App", std::string("Config load failed, using defaults: ") + e.what());
+    }
+    ApplyLogLevel();
+    ResetConfigSnapshot();
 
     m_engine.Init();
     m_engine.SetWorkflows(m_config.workflows);
@@ -209,6 +222,7 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     m_actEditor.SetOverlayOpacity(&m_config.pick_overlay_opacity);
 
     m_engine.SetTriggerCallback([this](const std::string& id) {
+        Logger::Info("Engine", "Run workflow (chained) \"" + WfName(id) + "\"");
         m_engine.StartWorkflow(id);
     });
 
@@ -220,7 +234,10 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
     // Auto-start workflows flagged to run on launch (smart detection still
     // defers the actual start until the user is idle)
     for (auto& wf : m_config.workflows)
-        if (wf.enabled && wf.auto_start) m_engine.StartWorkflow(wf.id);
+        if (wf.enabled && wf.auto_start) {
+            Logger::Info(wf.name, "Auto start on launch");
+            m_engine.StartWorkflow(wf.id);
+        }
 
     m_tray.Init(kIconPixels, 32, 32);
     UpdateTrayWorkflows();
@@ -237,16 +254,21 @@ void AppUI::Shutdown() {
     m_tray.Shutdown();
     m_triggers.Stop();
     m_engine.Shutdown();
-    if (m_dirty) SaveConfig();
+    if (m_dirty) {
+        Logger::Info("App", "Unsaved changes auto-saved on exit");
+        SaveConfig();
+    }
 }
 
 bool AppUI::RequestQuit() {
     // If "close to tray" is enabled, minimize to tray instead of quitting
     if (m_config.close_to_tray) {
+        Logger::Debug("User", "Close -> minimized to tray (close to tray enabled)");
         MinimizeToTray();
         return false;
     }
     if (!m_dirty) {
+        if (!m_shouldQuit) Logger::Info("User", "Exit");
         m_shouldQuit = true;
         return true;
     }
@@ -265,7 +287,10 @@ bool AppUI::RequestQuit() {
 }
 
 void AppUI::OnWindowMinimized() {
-    if (m_config.minimize_to_tray) MinimizeToTray();
+    if (m_config.minimize_to_tray) {
+        Logger::Debug("User", "Minimized to tray");
+        MinimizeToTray();
+    }
 }
 
 void AppUI::MinimizeToTray() {
@@ -362,30 +387,39 @@ void AppUI::PollTrayActions() {
                 else                  RestoreFromTray();
                 break;
             case TrayAction::Exit:
+                Logger::Info("User", "Tray: Exit");
                 RequestQuit();
                 break;
             case TrayAction::StartAll:
+                Logger::Info("User", "Tray: Start All");
                 m_engine.StartAll();
                 break;
             case TrayAction::StopAll:
+                Logger::Info("User", "Tray: Stop All");
                 m_engine.StopAll();
                 break;
             case TrayAction::PauseAll:
+                Logger::Info("User", "Tray: Pause All");
                 m_engine.PauseAll();
                 break;
             case TrayAction::ResumeAll:
+                Logger::Info("User", "Tray: Resume All");
                 m_engine.ResumeAll();
                 break;
             case TrayAction::StartWorkflow:
+                Logger::Info("User", "Tray: Start \"" + WfName(a.wfId) + "\"");
                 m_engine.StartWorkflow(a.wfId);
                 break;
             case TrayAction::StopWorkflow:
+                Logger::Info("User", "Tray: Stop \"" + WfName(a.wfId) + "\"");
                 m_engine.StopWorkflow(a.wfId);
                 break;
             case TrayAction::PauseWorkflow:
+                Logger::Info("User", "Tray: Pause \"" + WfName(a.wfId) + "\"");
                 m_engine.PauseWorkflow(a.wfId);
                 break;
             case TrayAction::ResumeWorkflow:
+                Logger::Info("User", "Tray: Resume \"" + WfName(a.wfId) + "\"");
                 m_engine.ResumeWorkflow(a.wfId);
                 break;
         }
@@ -393,16 +427,52 @@ void AppUI::PollTrayActions() {
 }
 
 void AppUI::SaveConfig() {
+    LogConfigChanges();
     try {
         ConfigManager::Save(m_config, m_configPath);
         m_dirty = false;
-    } catch (...) {}
+        Logger::Info("User", "Config saved: " + m_configPath);
+    } catch (const std::exception& e) {
+        Logger::Error("App", std::string("Config save failed: ") + e.what());
+    }
+}
+
+std::string AppUI::WfName(const std::string& id) const {
+    for (auto& w : m_config.workflows) if (w.id == id) return w.name;
+    return id;
+}
+
+void AppUI::ApplyLogLevel() {
+    const std::string& l = m_config.log_level;
+    Logger::SetFileLevel(l == "debug" ? Logger::Level::Debug
+                       : l == "error" ? Logger::Level::Error : Logger::Level::Info);
+}
+
+void AppUI::ResetConfigSnapshot() {
+    m_cfgSnapshot     = ConfigManager::ToJson(m_config);
+    m_cfgSnapshotTick = SDL_GetTicks();
+}
+
+void AppUI::LogConfigChanges() {
+    m_cfgSnapshotTick = SDL_GetTicks();
+    nlohmann::ordered_json now = ConfigManager::ToJson(m_config);
+    if (now == m_cfgSnapshot) return;
+    auto changes = DiffConfigJson(m_cfgSnapshot, now);
+    constexpr size_t kMaxLines = 50;
+    for (size_t i = 0; i < changes.size() && i < kMaxLines; ++i)
+        Logger::Info("Edit", changes[i]);
+    if (changes.size() > kMaxLines)
+        Logger::Info("Edit", "... and " + std::to_string(changes.size() - kMaxLines) + " more changes");
+    m_cfgSnapshot = std::move(now);
 }
 
 void AppUI::DiscardConfig() {
+    Logger::Info("User", "Discard changes (reload config from disk)");
+    LogConfigChanges();   // record what is being thrown away
     try {
         m_engine.StopAll();
         m_config = ConfigManager::Load(m_configPath);
+        ResetConfigSnapshot();
         m_engine.SetWorkflows(m_config.workflows);
         strncpy(m_cfgStartRecBuf,  m_config.start_record_hotkey.c_str(), sizeof(m_cfgStartRecBuf)-1);
         strncpy(m_cfgStopRecBuf,   m_config.stop_record_hotkey.c_str(),  sizeof(m_cfgStopRecBuf)-1);
@@ -424,7 +494,9 @@ void AppUI::DiscardConfig() {
             [&](auto& w){ return w.id == m_selectedId; });
         if (!selValid)
             m_selectedId = m_config.workflows.empty() ? "" : m_config.workflows[0].id;
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        Logger::Error("App", std::string("Config reload failed: ") + e.what());
+    }
 }
 
 void AppUI::LoadConfig(const std::string& path) {
@@ -432,11 +504,15 @@ void AppUI::LoadConfig(const std::string& path) {
         m_engine.StopAll();
         m_config     = ConfigManager::Load(path);
         m_configPath = path;
+        Logger::Info("App", "Config loaded: " + path);
+        ResetConfigSnapshot();
         m_engine.SetWorkflows(m_config.workflows);
         m_actEditor.SetWorkflows(&m_config.workflows);
         m_dirty = false;
         if (!m_config.workflows.empty()) m_selectedId = m_config.workflows[0].id;
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        Logger::Error("App", "Config load failed (" + path + "): " + e.what());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,6 +521,11 @@ void AppUI::Render() {
     // Hoist selected-workflow lookup — needed by RunSnipStateMachine and main UI
     auto selIt = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
         [&](auto& w){ return w.id == m_selectedId; });
+
+    // Log committed config edits about once a second (not while a field is
+    // being typed into, so a text edit is logged once with its final value)
+    if (m_dirty && SDL_GetTicks() - m_cfgSnapshotTick >= 1000 && !ImGui::IsAnyItemActive())
+        LogConfigChanges();
 
     // Activity editor snip SM must run every frame (manages window show/hide/opacity)
     if (selIt != m_config.workflows.end())
@@ -514,14 +595,22 @@ void AppUI::Render() {
         ImGuiIO& kio = ImGui::GetIO();
         if (!kio.WantTextInput && !anyCapture) {
             for (auto& wf : m_config.workflows) {
-                if (!wf.hotkey_start.empty()  && IsHotkeyPressed(wf.hotkey_start))
+                if (!wf.hotkey_start.empty()  && IsHotkeyPressed(wf.hotkey_start)) {
+                    Logger::Info("User", "Hotkey " + wf.hotkey_start + ": Start \"" + wf.name + "\"");
                     m_engine.StartWorkflow(wf.id);
-                if (!wf.hotkey_stop.empty()   && IsHotkeyPressed(wf.hotkey_stop))
+                }
+                if (!wf.hotkey_stop.empty()   && IsHotkeyPressed(wf.hotkey_stop)) {
+                    Logger::Info("User", "Hotkey " + wf.hotkey_stop + ": Stop \"" + wf.name + "\"");
                     m_engine.StopWorkflow(wf.id);
-                if (!wf.hotkey_pause.empty()  && IsHotkeyPressed(wf.hotkey_pause))
+                }
+                if (!wf.hotkey_pause.empty()  && IsHotkeyPressed(wf.hotkey_pause)) {
+                    Logger::Info("User", "Hotkey " + wf.hotkey_pause + ": Pause \"" + wf.name + "\"");
                     m_engine.PauseWorkflow(wf.id);
-                if (!wf.hotkey_resume.empty() && IsHotkeyPressed(wf.hotkey_resume))
+                }
+                if (!wf.hotkey_resume.empty() && IsHotkeyPressed(wf.hotkey_resume)) {
+                    Logger::Info("User", "Hotkey " + wf.hotkey_resume + ": Resume \"" + wf.name + "\"");
                     m_engine.ResumeWorkflow(wf.id);
+                }
             }
         }
     }
@@ -562,6 +651,7 @@ void AppUI::Render() {
             ImGui::Text("Delete workflow \"%s\"?", name);
             ImGui::Separator();
             if (ImGui::Button("Yes##wfdel", ImVec2(80, 0))) {
+                Logger::Info("User", std::string("Delete workflow \"") + name + "\"");
                 DeleteWorkflow(m_confirmDeleteWfId);
                 m_confirmDeleteWfId.clear();
                 ImGui::CloseCurrentPopup();
@@ -756,12 +846,16 @@ void AppUI::RenderQuitConfirmModal() {
         ImGui::Text("You have unsaved changes. What would you like to do?");
         ImGui::Separator();
         if (ImGui::Button("Save & Exit", ImVec2(110, 0))) {
+            Logger::Info("User", "Exit (save changes)");
             SaveConfig();
             m_shouldQuit = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard & Exit", ImVec2(110, 0))) {
+            Logger::Info("User", "Exit (discard changes)");
+            LogConfigChanges();
+            m_dirty      = false;   // Shutdown() must not auto-save the discarded edits
             m_shouldQuit = true;
             ImGui::CloseCurrentPopup();
         }
@@ -810,25 +904,27 @@ void AppUI::RenderMenuBar() {
                               "Takes effect on the next launch.");
 
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit"))
+        if (ImGui::MenuItem("Exit")) {
+            Logger::Debug("User", "Menu: Exit");
             RequestQuit();
+        }
 
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Workflows")) {
-        if (ImGui::MenuItem("Start All"))  m_engine.StartAll();
+        if (ImGui::MenuItem("Start All"))  { Logger::Info("User", "Menu: Start All");  m_engine.StartAll(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
 
-        if (ImGui::MenuItem("Stop All"))   m_engine.StopAll();
+        if (ImGui::MenuItem("Stop All"))   { Logger::Info("User", "Menu: Stop All");   m_engine.StopAll(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Pause All"))  m_engine.PauseAll();
+        if (ImGui::MenuItem("Pause All"))  { Logger::Info("User", "Menu: Pause All");  m_engine.PauseAll(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause all currently running workflows");
 
-        if (ImGui::MenuItem("Resume All")) m_engine.ResumeAll();
+        if (ImGui::MenuItem("Resume All")) { Logger::Info("User", "Menu: Resume All"); m_engine.ResumeAll(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resume all paused workflows");
 
         ImGui::EndMenu();
@@ -853,22 +949,22 @@ void AppUI::RenderTopBar() {
     bool anyRunning = m_engine.AnyRunning();
     bool anyPaused  = m_engine.AnyPaused();
 
-    if (ImGui::Button(">> Start All")) m_engine.StartAll();
+    if (ImGui::Button(">> Start All")) { Logger::Info("User", "Button: Start All"); m_engine.StartAll(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start all enabled workflows");
     ImGui::SameLine();
-    if (ImGui::Button("[Stop All]"))  m_engine.StopAll();
+    if (ImGui::Button("[Stop All]"))  { Logger::Info("User", "Button: Stop All"); m_engine.StopAll(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop all running workflows");
     ImGui::SameLine();
 
     ImGui::BeginDisabled(!anyRunning || anyPaused);
-    if (ImGui::Button("|| Pause All")) m_engine.PauseAll();
+    if (ImGui::Button("|| Pause All")) { Logger::Info("User", "Button: Pause All"); m_engine.PauseAll(); }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Pause all running workflows (they stay alive but stop executing)");
     ImGui::SameLine();
 
     ImGui::BeginDisabled(!anyPaused);
-    if (ImGui::Button("> Resume All")) m_engine.ResumeAll();
+    if (ImGui::Button("> Resume All")) { Logger::Info("User", "Button: Resume All"); m_engine.ResumeAll(); }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Resume all paused workflows");
@@ -929,26 +1025,41 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     bool starting     = m_engine.IsStarting(wf.id);
     ImGui::SameLine();
     if (!running && !starting) {
-        if (ImGui::Button(">> Start")) m_engine.StartWorkflow(wf.id);
+        if (ImGui::Button(">> Start")) {
+            Logger::Info("User", "Button: Start \"" + wf.name + "\"");
+            m_engine.StartWorkflow(wf.id);
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start this workflow now");
     } else if (starting) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.3f, 0.7f, 1.f));
-        if (ImGui::Button("[Cancel]")) m_engine.StopWorkflow(wf.id);
+        if (ImGui::Button("[Cancel]")) {
+            Logger::Info("User", "Button: Cancel pending start \"" + wf.name + "\"");
+            m_engine.StopWorkflow(wf.id);
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel the pending start");
         ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f,0.1f,0.1f,1.f));
-        if (ImGui::Button("[Stop]"))  m_engine.StopWorkflow(wf.id);
+        if (ImGui::Button("[Stop]")) {
+            Logger::Info("User", "Button: Stop \"" + wf.name + "\"");
+            m_engine.StopWorkflow(wf.id);
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop this workflow");
         ImGui::PopStyleColor();
         ImGui::SameLine();
         if (!paused) {
-            if (ImGui::Button("||")) m_engine.PauseWorkflow(wf.id);
+            if (ImGui::Button("||")) {
+                Logger::Info("User", "Button: Pause \"" + wf.name + "\"");
+                m_engine.PauseWorkflow(wf.id);
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause this workflow");
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f,0.5f,0.8f,1.f));
             ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(1.f,1.f,0.3f,1.f));
-            if (ImGui::Button(">")) m_engine.ResumeWorkflow(wf.id);
+            if (ImGui::Button(">")) {
+                Logger::Info("User", "Button: Resume \"" + wf.name + "\"");
+                m_engine.ResumeWorkflow(wf.id);
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resume this paused workflow");
             ImGui::PopStyleColor(2);
         }
@@ -1054,8 +1165,10 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Open recording window to configure filters, then start recording");
         ImGui::SameLine();
-        if (ImGui::Button("[Rec!]"))
+        if (ImGui::Button("[Rec!]")) {
+            Logger::Info("User", "Recording started ([Rec!]) for \"" + wf.name + "\"");
             m_recorder.Start();
+        }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Start recording immediately (uses current filter settings)");
     } else if (m_recorder.IsRecording()) {
@@ -1137,7 +1250,11 @@ void AppUI::RenderLogPanel(float height) {
     ImGui::SameLine();
     ImGui::TextDisabled("(%d)", (int)entries.size());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear##log")) Logger::Clear();
+    if (ImGui::SmallButton("Clear##log")) {
+        Logger::Debug("User", "Log panel cleared");
+        Logger::Clear();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear the entries shown here (log files are kept)");
     ImGui::SameLine();
     if (ImGui::SmallButton("Open log file") && !Logger::FilePath().empty()) {
         std::string url = "file:///" + Logger::FilePath();
@@ -1145,6 +1262,52 @@ void AppUI::RenderLogPanel(float height) {
         SDL_OpenURL(url.c_str());
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Logger::FilePath().c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Open log folder") && !Logger::Dir().empty()) {
+        std::string url = "file:///" + Logger::Dir();
+        for (auto& c : url) if (c == '\\') c = '/';
+        SDL_OpenURL(url.c_str());
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Logger::Dir().c_str());
+
+    // File log level
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    static const char* kLevels[]    = {"DEBUG", "INFO", "ERROR"};
+    static const char* kLevelKeys[] = {"debug", "info", "error"};
+    int lvl = m_config.log_level == "debug" ? 0 : m_config.log_level == "error" ? 2 : 1;
+    ImGui::SetNextItemWidth(80);
+    if (ImGui::Combo("Level##log", &lvl, kLevels, 3)) {
+        Logger::Info("User", std::string("Log level set to ") + kLevels[lvl]);
+        m_config.log_level = kLevelKeys[lvl];
+        ApplyLogLevel();
+        m_dirty = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Minimum level written to the log file:\n"
+                          "DEBUG - everything, incl. every executed activity (trace)\n"
+                          "INFO  - user operations and main events\n"
+                          "ERROR - errors only");
+
+    // Old log file cleanup
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70);
+    if (ImGui::InputInt("days##logret", &m_config.log_retention_days)) {
+        m_config.log_retention_days = std::clamp(m_config.log_retention_days, 0, 3650);
+        m_dirty = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("\"Clear old logs\" deletes log files older than this many days");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear old logs")) {
+        int n = Logger::PurgeOldFiles(m_config.log_retention_days);
+        Logger::Info("User", "Clear old logs (older than " + std::to_string(m_config.log_retention_days)
+                     + " days): " + std::to_string(n) + " file(s) deleted");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Delete log files older than %d days from\n%s",
+                          m_config.log_retention_days, Logger::Dir().c_str());
 
     if (m_showLog) {
         ImGui::BeginChild("##logentries", ImVec2(0, 0), false,
@@ -1503,6 +1666,7 @@ void AppUI::AddWorkflow() {
     Workflow wf;
     wf.id   = GenId();
     wf.name = "New Workflow";
+    Logger::Info("User", "Workflow created \"" + wf.name + "\" [" + wf.id + "]");
     m_config.workflows.push_back(wf);
     m_selectedId = wf.id;
     m_engine.SetWorkflows(m_config.workflows);
@@ -1516,6 +1680,7 @@ void AppUI::DuplicateWorkflow(const std::string& id) {
     Workflow copy = *it;
     copy.id   = GenId();
     copy.name = copy.name + " (copy)";
+    Logger::Info("User", "Workflow duplicated \"" + it->name + "\" -> \"" + copy.name + "\" [" + copy.id + "]");
     for (auto& a : copy.activities) a.id = GenId();
     m_config.workflows.insert(it + 1, copy);
     m_selectedId = copy.id;

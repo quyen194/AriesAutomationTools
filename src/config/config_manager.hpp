@@ -2,6 +2,7 @@
 #include "core/workflow.hpp"
 #include <string>
 #include <stdexcept>
+#include <nlohmann/json.hpp>
 
 class ConfigManager {
 public:
@@ -10,6 +11,9 @@ public:
 
     // Save config to file. Throws std::runtime_error on write failure.
     static void Save(const AppConfig& config, const std::string& path);
+
+    // The JSON document Save() writes (used to diff configs for the log)
+    static nlohmann::ordered_json ToJson(const AppConfig& config);
 
     // Per-user app data directory (created if missing):
     //   Windows: %APPDATA%\AriesAutomationTools

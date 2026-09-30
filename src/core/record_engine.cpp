@@ -1,5 +1,6 @@
 #include "record_engine.hpp"
 #include "input/key_map.hpp"
+#include "logger.hpp"
 #include <chrono>
 #include <algorithm>
 
@@ -80,6 +81,7 @@ void RecordEngine::Start() {
     m_lastMoveX = -9999;
     m_lastMoveY = -9999;
     m_recording = true;
+    Logger::Debug("Record", "Installing input hooks");
 
 #if defined(_WIN32)
     // Consumer thread first so it's ready before any events arrive
@@ -117,6 +119,7 @@ void RecordEngine::Stop() {
         m_consumerThread.join();
     }
 #endif
+    Logger::Debug("Record", "Hooks removed, " + std::to_string(m_events.size()) + " raw events captured");
 }
 
 void RecordEngine::InstallHooks() {

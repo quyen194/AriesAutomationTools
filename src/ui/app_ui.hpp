@@ -48,6 +48,12 @@ private:
     void SaveConfig();
     void DiscardConfig();
     void LoadConfig(const std::string& path);
+
+    // Logging helpers
+    std::string WfName(const std::string& id) const;
+    void ApplyLogLevel();          // m_config.log_level -> Logger file level
+    void ResetConfigSnapshot();    // baseline for LogConfigChanges()
+    void LogConfigChanges();       // log edits made since the last snapshot
     std::string EnsureId(Workflow& wf);
 
     // Apply OS-level hotkeys via the engine.
@@ -68,6 +74,8 @@ private:
     std::string            m_configPath;
     std::string            m_selectedId;
     bool                   m_dirty = false;
+    nlohmann::ordered_json m_cfgSnapshot;          // config as last logged
+    uint32_t               m_cfgSnapshotTick = 0;  // SDL ticks of last diff
 
     SDL_Window*            m_sdlWindow  = nullptr;
     unsigned int           m_iconTexture = 0;       // GL texture id

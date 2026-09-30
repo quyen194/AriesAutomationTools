@@ -1,6 +1,7 @@
 #include "scheduler.hpp"
 #include "variables.hpp"
 #include "logger.hpp"
+#include "activity_summary.hpp"
 #include "input/input_simulator.hpp"
 #include "window/pixel_checker.hpp"
 #include <cstdlib>
@@ -149,20 +150,30 @@ void Scheduler::Run() {
     // Runtime variables live in m_vars. Only this thread writes them (under
     // m_stateMutex so the UI can snapshot); reads here need no lock.
     const VarMap& variables = m_vars;
+    const std::string& wfName = m_workflow.name;
     auto setVar = [&](const std::string& name, const std::string& value) {
         if (name.empty()) return;
+        Logger::Debug(wfName, "  var $" + name + " = \"" + value + "\"");
         std::lock_guard<std::mutex> lk(m_stateMutex);
         m_vars[name] = value;
     };
     auto eraseVar = [&](const std::string& name) {
+        Logger::Debug(wfName, "  var $" + name + " cleared");
         std::lock_guard<std::mutex> lk(m_stateMutex);
         m_vars.erase(name);
     };
+    auto xy = [](int x, int y) { return "(" + std::to_string(x) + "," + std::to_string(y) + ")"; };
 
     // Execution path (activity ids / 1-based step numbers) for error reporting
     std::vector<std::string> idStack;
     std::vector<int>         stepStack;
     std::vector<std::string> typeStack;
+    auto stepPath = [&]() {
+        std::string p;
+        for (size_t k = 0; k < stepStack.size(); ++k)
+            p += (k ? " > " : "") + std::to_string(stepStack[k]);
+        return p;
+    };
 
     // Stops the workflow with a runtime error at the current step
     auto fail = [&](const std::string& reason) {
@@ -222,12 +233,21 @@ void Scheduler::Run() {
         int  jumpTarget    = -1;  // set by JumpActivity; applied after std::visit
 
         for (int i = 0; i < (int)acts.size() && !IsStopped(); ++i) {
-            if (!acts[i].enabled) continue;
+            if (!acts[i].enabled) {
+                Logger::Debug(wfName, "Skip disabled activity #" + std::to_string(i + 1)
+                              + " [" + acts[i].id + "]");
+                continue;
+            }
             if (updateIndex) m_currentIndex.store(i);
 
             // Spin while suspended or user-paused
-            while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if ((m_suspended.load() || m_userPaused.load()) && !IsStopped()) {
+                Logger::Debug(wfName, std::string("Waiting before activity #") + std::to_string(i + 1)
+                              + (m_userPaused.load() ? " (paused by user)" : " (suspended by smart detection)"));
+                while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                if (!IsStopped()) Logger::Debug(wfName, "Continue after pause/suspend");
+            }
             if (IsStopped()) break;
 
             idStack.push_back(acts[i].id);
@@ -238,12 +258,23 @@ void Scheduler::Run() {
                 ~PathPop() { a.pop_back(); b.pop_back(); c.pop_back(); }
             } pathPop{idStack, stepStack, typeStack};
 
+            Logger::Debug(wfName, "Step " + stepPath() + " [" + acts[i].id + "] "
+                          + ActivitySummary(acts[i]));
+
             // Substitute variable-bound fields (copy only when something is bound)
             const ActivityData* dataPtr = &acts[i].data;
             ActivityData resolved;
             if (!acts[i].var_bind.empty()) {
                 if (!resolveBindings(acts[i], resolved)) break;
                 dataPtr = &resolved;
+                std::string bound;
+                for (auto& [key, var] : acts[i].var_bind) {
+                    if (var.empty()) continue;
+                    auto vit = variables.find(var);
+                    bound += (bound.empty() ? "" : ", ") + key + "=$" + var + "=\""
+                           + (vit != variables.end() ? vit->second : std::string()) + "\"";
+                }
+                if (!bound.empty()) Logger::Debug(wfName, "  bindings: " + bound);
             }
 
             std::visit([&](auto&& v) {
@@ -252,6 +283,7 @@ void Scheduler::Run() {
                 if constexpr (std::is_same_v<T, MouseMoveActivity>) {
                     if (!g_input) return;
                     auto [ax, ay] = resolveCoords(v.pos_mode, v.x, v.y);
+                    Logger::Debug(wfName, "  move to screen " + xy(ax, ay));
                     if (v.smooth_move && v.smooth_duration_ms > 0) {
                         int sx, sy;
                         g_input->GetMousePos(sx, sy);
@@ -270,6 +302,8 @@ void Scheduler::Run() {
                 } else if constexpr (std::is_same_v<T, MouseClickActivity>) {
                     if (!g_input) return;
                     auto [ax, ay] = resolveCoords(v.pos_mode, v.x, v.y);
+                    Logger::Debug(wfName, std::string("  ") + (v.double_click ? "double-click" : "click")
+                                  + " at screen " + xy(ax, ay));
                     g_input->MouseClick(v.button, ax, ay, v.double_click);
                     SleepInterruptible(v.delay_ms + randExtra(v.delay_rand_ms));
 
@@ -277,12 +311,15 @@ void Scheduler::Run() {
                     if (!g_input) return;
                     auto [ax0, ay0] = resolveCoords(v.pos_mode, v.from_x, v.from_y);
                     auto [ax1, ay1] = resolveCoords(v.pos_mode, v.to_x,   v.to_y);
+                    Logger::Debug(wfName, "  drag screen " + xy(ax0, ay0) + " -> " + xy(ax1, ay1));
                     g_input->MouseDrag(v.button, ax0, ay0, ax1, ay1, std::max(1, v.duration_ms));
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, MouseScrollActivity>) {
                     if (!g_input) return;
                     auto [ax, ay] = resolveCoords(v.pos_mode, v.x, v.y);
+                    Logger::Debug(wfName, "  scroll at screen " + xy(ax, ay) + " dx=" + std::to_string(v.delta_x)
+                                  + " dy=" + std::to_string(v.delta_y));
                     g_input->MouseScroll(ax, ay, v.delta_x, v.delta_y);
                     SleepInterruptible(v.delay_ms);
 
@@ -297,7 +334,9 @@ void Scheduler::Run() {
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, WaitActivity>) {
-                    SleepInterruptible(v.duration_ms + randExtra(v.random_range_ms));
+                    int waitMs = v.duration_ms + randExtra(v.random_range_ms);
+                    Logger::Debug(wfName, "  wait " + std::to_string(waitMs) + "ms");
+                    SleepInterruptible(waitMs);
 
                 } else if constexpr (std::is_same_v<T, PixelCheckActivity>) {
                     if (!g_pixel) return;
@@ -309,20 +348,32 @@ void Scheduler::Run() {
                         if (ColorsMatch(c, v.color_rgb, v.tolerance)) {
                             matched = true; break;
                         }
+                        char cbuf[64];
+                        snprintf(cbuf, sizeof(cbuf), "#%06X (expected #%06X +/-%d)",
+                                 c & 0xFFFFFF, v.color_rgb & 0xFFFFFF, v.tolerance);
                         if (v.on_no_match == PixelCheckAction::SkipIteration) {
+                            Logger::Debug(wfName, "  pixel " + xy(ax, ay) + " = " + cbuf
+                                          + " -> no match, skip iteration");
                             skipIteration = true; return;
                         }
                         if (v.on_no_match == PixelCheckAction::StopWorkflow) {
+                            Logger::Info(wfName, "Step " + stepPath() + ": pixel " + xy(ax, ay) + " = "
+                                         + cbuf + " -> no match, stopping workflow");
                             m_stopFlag = true; return;
                         }
                         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - start).count();
                         if (v.retry_timeout_ms > 0 && elapsed >= v.retry_timeout_ms) {
+                            Logger::Debug(wfName, "  pixel " + xy(ax, ay) + " = " + cbuf + " -> retry timeout ("
+                                          + std::to_string(elapsed) + "ms), skip iteration");
                             skipIteration = true; return;
                         }
                         SleepInterruptible(v.retry_interval_ms);
                     }
-                    if (matched) SleepInterruptible(v.delay_ms);
+                    if (matched) {
+                        Logger::Debug(wfName, "  pixel " + xy(ax, ay) + " matched");
+                        SleepInterruptible(v.delay_ms);
+                    }
 
                 } else if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
                     if (!g_pixel) { SleepInterruptible(v.delay_ms); return; }
@@ -340,10 +391,11 @@ void Scheduler::Run() {
 
                     bool matched = false;
                     int elapsed = 0;
+                    int lastPct = 0;
                     do {
                         PixelBuffer cur = g_pixel->CaptureRegion(ax, ay, v.sample_w, v.sample_h);
-                        if (BuffersMatchPercent(sample, cur, std::clamp(v.tolerance, 0, 255))
-                                >= std::clamp(v.match_percent, 0, 100)) {
+                        lastPct = BuffersMatchPercent(sample, cur, std::clamp(v.tolerance, 0, 255));
+                        if (lastPct >= std::clamp(v.match_percent, 0, 100)) {
                             matched = true; break;
                         }
                         if (v.retry_timeout_ms == 0) break;
@@ -351,6 +403,11 @@ void Scheduler::Run() {
                         elapsed += v.retry_interval_ms;
                     } while (elapsed < v.retry_timeout_ms && !IsStopped());
 
+                    Logger::Debug(wfName, "  region at screen " + xy(ax, ay) + " " + std::to_string(v.sample_w)
+                                  + "x" + std::to_string(v.sample_h) + ": " + std::to_string(lastPct)
+                                  + "% (need " + std::to_string(v.match_percent) + "%) after "
+                                  + std::to_string(elapsed) + "ms -> "
+                                  + (matched ? "MATCH branch" : "NO-MATCH branch"));
                     auto& branch = matched ? v.match_body : v.no_match_body;
                     if (branch && !branch->empty()) {
                         auto sig = runActivities(*branch, calledIds, false);
@@ -403,13 +460,22 @@ void Scheduler::Run() {
                         case SystemAction::LogOut:    cmd = "loginctl terminate-user $USER"; break;
                     }
 #endif
-                    if (cmd) std::system(cmd);
+                    if (cmd) {
+                        Logger::Info(wfName, std::string("Executing system action: ") + cmd);
+                        int rc = std::system(cmd);
+                        Logger::Debug(wfName, "  system() returned " + std::to_string(rc));
+                    }
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, RunActivityActivity>) {
-                    if (calledIds.count(v.activity_id)) { SleepInterruptible(v.delay_ms); return; }
+                    if (calledIds.count(v.activity_id)) {
+                        Logger::Debug(wfName, "  run_activity [" + v.activity_id + "] skipped (recursive call)");
+                        SleepInterruptible(v.delay_ms); return;
+                    }
+                    bool found = false;
                     for (const auto& a : m_workflow.activities) {
                         if (a.id == v.activity_id && a.enabled) {
+                            found = true;
                             calledIds.insert(v.activity_id);
                             std::vector<Activity> one = {a};
                             runActivities(one, calledIds, false);
@@ -417,6 +483,8 @@ void Scheduler::Run() {
                             break;
                         }
                     }
+                    if (!found)
+                        Logger::Debug(wfName, "  run_activity target [" + v.activity_id + "] not found or disabled");
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, SetVariableActivity>) {
@@ -456,6 +524,8 @@ void Scheduler::Run() {
                     int remaining = v.count;  // 0 = infinite
                     int iter = 1;
                     while (!IsStopped() && (remaining == 0 || remaining-- > 0)) {
+                        Logger::Debug(wfName, "  loop " + stepPath() + " iteration " + std::to_string(iter)
+                                      + (v.count > 0 ? "/" + std::to_string(v.count) : " (infinite)"));
                         if (!v.iter_var.empty())
                             setVar(v.iter_var, std::to_string(iter));
                         auto sig = runActivities(*v.body, calledIds, false);
@@ -467,6 +537,9 @@ void Scheduler::Run() {
 
                 } else if constexpr (std::is_same_v<T, IfActivity>) {
                     bool condTrue = EvalCondition(v.cond, variables);
+                    Logger::Debug(wfName, "  condition \"" + ResolveValue(v.cond.lhs, v.cond.lhs_is_var, variables)
+                                  + "\" vs \"" + ResolveValue(v.cond.rhs, v.cond.rhs_is_var, variables)
+                                  + "\" -> " + (condTrue ? "THEN" : "ELSE"));
                     auto& branch = condTrue ? v.then_body : v.else_body;
                     if (branch && !branch->empty()) {
                         auto sig = runActivities(*branch, calledIds, false);
@@ -479,11 +552,14 @@ void Scheduler::Run() {
                     bool matched = false;
                     for (const auto& sc : v.cases) {
                         if (ResolveValue(sc.value, sc.value_is_var, variables) == val && sc.body) {
+                            Logger::Debug(wfName, "  switch value \"" + val + "\" -> case \"" + sc.value + "\"");
                             auto sig = runActivities(*sc.body, calledIds, false);
                             if (sig == FlowSignal::Stop) { skipIteration = true; return; }
                             matched = true; break;
                         }
                     }
+                    if (!matched)
+                        Logger::Debug(wfName, "  switch value \"" + val + "\" -> default");
                     if (!matched && v.default_body && !v.default_body->empty()) {
                         auto sig = runActivities(*v.default_body, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
@@ -498,6 +574,10 @@ void Scheduler::Run() {
                             break;
                         }
                     }
+                    if (jumpTarget >= 0)
+                        Logger::Debug(wfName, "  jump to activity #" + std::to_string(jumpTarget + 2));
+                    else
+                        Logger::Debug(wfName, "  jump target [" + v.target_id + "] not found in this list");
 
                 } else if constexpr (std::is_same_v<T, GetMousePositionActivity>) {
                     if (!g_input) return;
@@ -516,6 +596,7 @@ void Scheduler::Run() {
                         std::lock_guard<std::mutex> lk(m_stateMutex);
                         m_vars.clear();
                     }
+                    Logger::Debug(wfName, "  all variables cleared");
                     SleepInterruptible(v.delay_ms);
                 }
 
@@ -529,12 +610,22 @@ void Scheduler::Run() {
         return skipIteration ? FlowSignal::SkipIter : FlowSignal::Continue;
     };
 
-    Logger::Info(m_workflow.name, "Started");
+    Logger::Info(wfName, "Started (" + std::to_string(m_workflow.activities.size()) + " activities, repeat "
+                 + (m_workflow.repeat_count > 0 ? std::to_string(m_workflow.repeat_count) + "x" : "forever")
+                 + ", interval " + std::to_string(m_repeatIntervalMs.load()) + "ms)");
+    auto runStart = std::chrono::steady_clock::now();
+    int iteration = 0;
 
     while (!IsStopped()) {
         std::unordered_set<std::string> calledIds;
 
+        ++iteration;
+        Logger::Debug(wfName, "Iteration " + std::to_string(iteration) + " begin");
+        auto iterStart = std::chrono::steady_clock::now();
         runActivities(m_workflow.activities, calledIds, true);
+        Logger::Debug(wfName, "Iteration " + std::to_string(iteration) + " end ("
+                      + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - iterStart).count()) + "ms)");
 
         m_currentIndex = -1;
         if (IsStopped()) break;
@@ -548,7 +639,13 @@ void Scheduler::Run() {
         m_waitingRepeat.store(false);
     }
 
+    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - runStart).count();
+    std::string stats = " after " + std::to_string(iteration) + " iteration(s), "
+                      + std::to_string(totalMs) + "ms";
     if (!m_terminated.load())
-        Logger::Info(m_workflow.name, IsStopped() ? "Stopped" : "Finished");
+        Logger::Info(wfName, (IsStopped() ? "Stopped" : "Finished") + stats);
+    else
+        Logger::Debug(wfName, "Terminated" + stats);
     m_running = false;
 }

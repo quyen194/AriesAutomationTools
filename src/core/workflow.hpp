@@ -310,5 +310,7 @@ struct AppConfig {
     bool        minimize_to_tray = false;
     bool        single_instance  = true;
     float       pick_overlay_opacity = 0.35f; // 0=transparent, 1=opaque
+    std::string log_level          = "info";  // minimum level written to the log file: debug | info | error
+    int         log_retention_days = 7;       // "Clear old logs" deletes files older than this
     std::vector<Workflow> workflows;
 };

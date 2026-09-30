@@ -1,5 +1,8 @@
 #include "trigger_manager.hpp"
 #include "window/pixel_checker.hpp"
+#include "logger.hpp"
+#include <map>
+#include <set>
 #include <sstream>
 #include <chrono>
 #include <mutex>
@@ -13,6 +16,7 @@ void TriggerManager::Start(const std::vector<Workflow>& workflows,
     m_cb        = cb;
     m_stop      = false;
     m_thread    = std::thread(&TriggerManager::Run, this);
+    Logger::Debug("Trigger", "Trigger manager started (" + std::to_string(workflows.size()) + " workflows)");
 }
 
 void TriggerManager::Stop() {
@@ -23,9 +27,19 @@ void TriggerManager::Stop() {
 void TriggerManager::Reload(const std::vector<Workflow>& workflows) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_workflows = workflows;
+    Logger::Debug("Trigger", "Trigger list reloaded");
 }
 
 void TriggerManager::Run() {
+    // Last evaluated state per workflow id — the log records only transitions
+    // (a cron match lasts a whole minute and is polled every 500ms)
+    std::map<std::string, bool> lastHit;
+    std::set<std::string>       badCron;   // invalid expressions already reported
+    auto edge = [&](const Workflow& wf, bool hit, const std::string& what) {
+        bool& prev = lastHit[wf.id];
+        if (hit && !prev) Logger::Info(wf.name, "Trigger fired: " + what);
+        prev = hit;
+    };
     while (!m_stop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -48,8 +62,15 @@ void TriggerManager::Run() {
 
             auto& trig = wf.trigger;
             if (trig.type == StartTrigger::Type::Schedule) {
-                if (CronMatches(trig.cron_expr, now_tm))
-                    if (m_cb) m_cb(wf.id);
+                bool hit = false;
+                try {
+                    hit = CronMatches(trig.cron_expr, now_tm);
+                } catch (const std::exception&) {
+                    if (badCron.insert(wf.id + "|" + trig.cron_expr).second)
+                        Logger::Error(wf.name, "Invalid schedule expression \"" + trig.cron_expr + "\"");
+                }
+                edge(wf, hit, "schedule \"" + trig.cron_expr + "\"");
+                if (hit && m_cb) m_cb(wf.id);
 
             } else if (trig.type == StartTrigger::Type::Pixel) {
                 if (m_pixel && !trig.pixel_sample.empty() &&
@@ -64,9 +85,11 @@ void TriggerManager::Run() {
                     PixelBuffer cur = m_pixel->CaptureRegion(x1, y1,
                                                               trig.pixel_sample_w,
                                                               trig.pixel_sample_h);
-                    if (BuffersMatchPercent(sample, cur, trig.pixel_tolerance)
-                            >= trig.pixel_match_percent)
-                        if (m_cb) m_cb(wf.id);
+                    int pct = BuffersMatchPercent(sample, cur, trig.pixel_tolerance);
+                    bool hit = pct >= trig.pixel_match_percent;
+                    edge(wf, hit, "pixel region (" + std::to_string(x1) + "," + std::to_string(y1) + ") "
+                         + std::to_string(pct) + "% >= " + std::to_string(trig.pixel_match_percent) + "%");
+                    if (hit && m_cb) m_cb(wf.id);
                 }
             }
         }

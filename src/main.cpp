@@ -7,6 +7,7 @@
 #include "config/config_manager.hpp"
 #include "core/logger.hpp"
 #include "single_instance.hpp"
+#include "version.h"
 #include "icon_data.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -19,6 +20,16 @@
 static constexpr const char* kInstanceName = "AriesAutomationTools_Instance";
 
 int main(int argc, char** argv) {
+    // Log files: <DataDir>/logs/aries_automation_tools_YYYYMMDD_HH.log
+    Logger::Init(ConfigManager::DataDir() + "/logs");
+    {
+        std::string args;
+        for (int i = 1; i < argc; ++i) args += std::string(" ") + argv[i];
+        Logger::Info("App", std::string("===== ") + APP_PRODUCT_NAME_STR + " " + APP_VERSION_STR
+                     + " starting" + (args.empty() ? "" : " (args:" + args + ")") + " =====");
+        Logger::Debug("App", "Data dir: " + ConfigManager::DataDir());
+    }
+
     // Single-instance enforcement (skip if --allow-multiple is passed)
     bool skipSingleInstance = false;
     for (int i = 1; i < argc; ++i)
@@ -33,6 +44,7 @@ int main(int argc, char** argv) {
         } catch (...) {}
 
         if (wantSingle && !TryAcquireSingleInstance(kInstanceName)) {
+            Logger::Info("App", "Another instance is already running - exiting");
             SDL_Init(SDL_INIT_VIDEO);
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,
                 "Aries Automation Tools",
@@ -45,6 +57,7 @@ int main(int argc, char** argv) {
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL_Init error: %s\n", SDL_GetError());
+        Logger::Error("App", std::string("SDL_Init failed: ") + SDL_GetError());
         return 1;
     }
 
@@ -74,6 +87,7 @@ int main(int argc, char** argv) {
         1100, 680, wflags);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow error: %s\n", SDL_GetError());
+        Logger::Error("App", std::string("SDL_CreateWindow failed: ") + SDL_GetError());
         SDL_Quit();
         return 1;
     }
@@ -96,6 +110,7 @@ int main(int argc, char** argv) {
     SDL_GLContext glContext = SDL_GL_CreateContext(window);
     if (!glContext) {
         fprintf(stderr, "SDL_GL_CreateContext error: %s\n", SDL_GetError());
+        Logger::Error("App", std::string("SDL_GL_CreateContext failed: ") + SDL_GetError());
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
@@ -114,9 +129,6 @@ int main(int argc, char** argv) {
     // Keep imgui.ini with the rest of the app data (not the working directory)
     static const std::string s_iniPath = ConfigManager::DataDir() + "/imgui.ini";
     io.IniFilename = s_iniPath.c_str();
-
-    // Workflow run / error log (also shown in the Log panel)
-    Logger::SetFile(ConfigManager::DataDir() + "/aries.log");
 
     // Style
     ImGui::StyleColorsDark();
@@ -199,5 +211,6 @@ int main(int argc, char** argv) {
     SDL_Quit();
 
     ReleaseSingleInstance();
+    Logger::Info("App", "===== Exited =====");
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "record_overlay.hpp"
 #include "imgui.h"
+#include "core/logger.hpp"
 #include <algorithm>
 #include <string>
 
@@ -191,13 +192,17 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
         float hw = (ImGui::GetContentRegionAvail().x - 4) * 0.5f;
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f,0.55f,0.1f,1.f));
         if (ImGui::Button("Start##recstart", ImVec2(hw, 0))) {
+            Logger::Info("User", std::string("Recording started (clicks only: ") + (m_clicksOnly ? "yes" : "no")
+                         + ", snap moves: " + (m_stopMoveMsEnabled ? std::to_string(m_stopMoveMsThreshold) + "ms" : "off") + ")");
             engine.Start();
             m_windowOpen = false;
         }
         ImGui::PopStyleColor();
         ImGui::SameLine(0, 4);
-        if (ImGui::Button("Cancel##recopen", ImVec2(hw, 0)))
+        if (ImGui::Button("Cancel##recopen", ImVec2(hw, 0))) {
+            Logger::Debug("User", "Recording window closed without recording");
             m_windowOpen = false;
+        }
 
         ImGui::End();
         return;
@@ -228,6 +233,8 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
 
         ImGui::Separator();
         if (ImGui::Button("[Stop]", ImVec2(-1, 0))) {
+            Logger::Info("User", "Recording stopped (overlay [Stop]), " + std::to_string(engine.Events().size())
+                         + " events captured");
             engine.Stop();
             TriggerReview(engine);
         }
@@ -321,6 +328,8 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
             for (size_t k = 0; k < m_captured.size(); ++k)
                 if (k < m_reviewSelected.size() && m_reviewSelected[k])
                     toAdd.push_back(m_captured[k]);
+            Logger::Info("User", "Recording accepted: " + std::to_string(toAdd.size()) + " of "
+                         + std::to_string(m_captured.size()) + " activities");
             if (OnFinished) OnFinished(toAdd);
             m_showReview = false;
             m_captured.clear();
@@ -329,6 +338,7 @@ void RecordOverlayWidget::Render(RecordEngine& engine) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard##rec", ImVec2(115, 0))) {
+            Logger::Info("User", "Recording discarded (" + std::to_string(m_captured.size()) + " activities)");
             m_showReview = false;
             m_captured.clear();
             m_reviewSelected.clear();
