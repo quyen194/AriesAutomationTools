@@ -6,6 +6,7 @@
 #include "activity_editor.hpp"
 #include "window/pixel_checker.hpp"
 #include "window/window_finder.hpp"
+#include "core/variables.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include <algorithm>
@@ -89,11 +90,12 @@ static const char* kTypes[] = {
     // 7 = pixel_check (hidden — not in this list)
     "pixel_range_check",     // displayed index 7 → variant index 8
     "run_workflow","system_action",
-    "run_activity","set_variable","loop","if","switch","jump"
+    "run_activity","set_variable","loop","if","switch","jump",
+    "get_mouse_position","clear_variables"
 };
 // Map displayed combo index → variant index
 static const int kTypeToVariantIdx[] = {
-    0,1,2,3,4,5,6, 8, 9,10, 11,12,13,14,15,16
+    0,1,2,3,4,5,6, 8, 9,10, 11,12,13,14,15,16, 17,18
 };
 static const int kNumTypes = (int)(sizeof(kTypes)/sizeof(kTypes[0]));
 
@@ -116,6 +118,8 @@ static int VariantToDisplayIdx(const ActivityData& d) {
     if (std::holds_alternative<IfActivity>(d))               return 13;
     if (std::holds_alternative<SwitchActivity>(d))           return 14;
     if (std::holds_alternative<JumpActivity>(d))             return 15;
+    if (std::holds_alternative<GetMousePositionActivity>(d)) return 16;
+    if (std::holds_alternative<ClearVariablesActivity>(d))   return 17;
     return -1;
 }
 
@@ -146,6 +150,8 @@ static ActivityData DefaultData(int displayIdx) {
                    v.default_body = std::make_shared<std::vector<Activity>>();
                    return v; }
         case 16: return JumpActivity{};
+        case 17: return GetMousePositionActivity{};
+        case 18: return ClearVariablesActivity{};
         default: return WaitActivity{};
     }
 }
@@ -171,7 +177,8 @@ static PositionMode* PosModeOf(ActivityData& d) {
                       std::is_same_v<T,MouseDragActivity>    ||
                       std::is_same_v<T,MouseScrollActivity>  ||
                       std::is_same_v<T,PixelCheckActivity>   ||
-                      std::is_same_v<T,PixelRangeCheckActivity>)
+                      std::is_same_v<T,PixelRangeCheckActivity> ||
+                      std::is_same_v<T,GetMousePositionActivity>)
             return &v.pos_mode;
         else
             return nullptr;
@@ -289,7 +296,12 @@ static void AutoNameBlock(Activity& a, const std::vector<Activity>& allActs,
 }
 
 // ── Short summary for list row ────────────────────────────────────────────────
-static std::string ActivitySummary(const Activity& a) {
+// "$name" for a variable reference, the plain text for a literal
+static std::string VarOrLit(const std::string& s, bool isVar) {
+    return isVar ? "$" + s : s;
+}
+
+static std::string ActivitySummaryCore(const Activity& a) {
     return std::visit([&a](auto&& v) -> std::string {
         using T = std::decay_t<decltype(v)>;
         char buf[160]{};
@@ -337,7 +349,9 @@ static std::string ActivitySummary(const Activity& a) {
                 v.name.c_str(),
                 v.op==VarOp::Set?"=":v.op==VarOp::Increment?"+=":
                 v.op==VarOp::Decrement?"-=":"rand",
-                v.value.c_str());
+                v.op==VarOp::Set ? (v.value.empty() && !a.var_bind.count("value")
+                                        ? "(clear)" : v.value.c_str())
+                : v.op==VarOp::Random ? "" : std::to_string(v.step).c_str());
         else if constexpr (std::is_same_v<T,LoopActivity>) {
             int n = v.body ? (int)v.body->size() : 0;
             snprintf(buf,sizeof(buf),"%s  x%d  [%d steps]",
@@ -345,21 +359,39 @@ static std::string ActivitySummary(const Activity& a) {
         } else if constexpr (std::is_same_v<T,IfActivity>) {
             snprintf(buf,sizeof(buf),"%s  if %s %s %s",
                 v.name.empty()?"if":v.name.c_str(),
-                v.cond.lhs.c_str(),
+                VarOrLit(v.cond.lhs, v.cond.lhs_is_var).c_str(),
                 v.cond.op==ConditionOp::Eq?"==":v.cond.op==ConditionOp::NEq?"!=":
                 v.cond.op==ConditionOp::Gt?">":v.cond.op==ConditionOp::Lt?"<":
                 v.cond.op==ConditionOp::GtEq?">=":v.cond.op==ConditionOp::LtEq?"<=":"contains",
-                v.cond.rhs.c_str());
+                VarOrLit(v.cond.rhs, v.cond.rhs_is_var).c_str());
         } else if constexpr (std::is_same_v<T,SwitchActivity>) {
             snprintf(buf,sizeof(buf),"%s  switch %s  [%d cases]",
                 v.name.empty()?"switch":v.name.c_str(),
-                v.var_name.c_str(),(int)v.cases.size());
+                VarOrLit(v.var_name, v.var_is_var).c_str(),(int)v.cases.size());
         } else if constexpr (std::is_same_v<T,JumpActivity>) {
             snprintf(buf,sizeof(buf),"jump -> %.32s",
                 v.target_id.empty() ? "(none)" : v.target_id.substr(0,24).c_str());
+        } else if constexpr (std::is_same_v<T,GetMousePositionActivity>) {
+            snprintf(buf,sizeof(buf),"get_mouse_position %s -> $%s, $%s",
+                v.pos_mode==PositionMode::Absolute?"abs":"rel",
+                v.x_var.empty()?"?":v.x_var.c_str(), v.y_var.empty()?"?":v.y_var.c_str());
+        } else if constexpr (std::is_same_v<T,ClearVariablesActivity>) {
+            snprintf(buf,sizeof(buf),"clear_variables +%dms", v.delay_ms);
         }
         return buf;
     }, a.data);
+}
+
+// Summary plus the variable bindings, e.g. "mouse_click ... {x=$px, y=$py}"
+static std::string ActivitySummary(const Activity& a) {
+    std::string s = ActivitySummaryCore(a);
+    if (a.var_bind.empty()) return s;
+    std::string tag;
+    for (auto& [key, var] : a.var_bind) {
+        if (var.empty()) continue;
+        tag += (tag.empty() ? "" : ", ") + key + "=$" + var;
+    }
+    return tag.empty() ? s : s + "  {" + tag + "}";
 }
 
 // ── SDL fullscreen overlay helpers ────────────────────────────────────────────
@@ -564,8 +596,23 @@ void ActivityEditorWidget::RenderPickOverlayIfActive() {
 
 // ── Main Render ───────────────────────────────────────────────────────────────
 
-void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
+void ActivityEditorWidget::Render(Workflow& wf, int currentStep,
+                                  const std::vector<std::string>* errorPath) {
     ImGuiIO& io = ImGui::GetIO();
+
+    // TERMINATED run: expand every block on the path to the failing step
+    std::string errorStepId;
+    if (errorPath && !errorPath->empty()) {
+        errorStepId = errorPath->back();
+        if (m_errorScrolledId != errorStepId)
+            for (size_t k = 0; k + 1 < errorPath->size(); ++k)
+                m_expandedIds.insert((*errorPath)[k]);
+    } else {
+        m_errorScrolledId.clear();
+    }
+    auto onErrorPath = [&](const std::string& id) {
+        return errorPath && std::find(errorPath->begin(), errorPath->end(), id) != errorPath->end();
+    };
 
     // Rebuild FlatNode list
     RebuildFlatNodes(wf);
@@ -819,17 +866,30 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         bool isCurrent  = (currentStep >= 0 && fn.parentList == &wf.activities &&
                            fn.indexInParent == currentStep);
         bool isSelected = m_selectedIds.count(a.id) > 0;
+        bool isErrorStep     = !errorStepId.empty() && a.id == errorStepId;
+        bool isErrorAncestor = !isErrorStep && onErrorPath(a.id);
+        if (isErrorStep) isCurrent = false;
 
         if (isCurrent && fn.indexInParent != m_lastScrolledStep) {
             ImGui::SetScrollHereY(0.5f);
             m_lastScrolledStep = fn.indexInParent;
+        }
+        if (isErrorStep && m_errorScrolledId != a.id) {
+            ImGui::SetScrollHereY(0.5f);
+            m_errorScrolledId = a.id;
         }
 
         if (isCurrent)
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.1f,0.65f,0.1f,0.55f)),
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.1f,0.65f,0.1f,0.75f)),
             ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.1f,0.65f,0.1f,0.90f));
-        if (!a.enabled && !isCurrent)
+        if (isErrorStep)
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.75f,0.1f,0.1f,0.60f)),
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.75f,0.1f,0.1f,0.80f)),
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.75f,0.1f,0.1f,0.95f));
+        if (isErrorAncestor)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,0.55f,0.55f,1.f));
+        else if (!a.enabled && !isCurrent)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1.f));
 
         // Expand/collapse toggle for block types
@@ -872,7 +932,7 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
         snprintf(label, sizeof(label), "%2d. %s##sel%d",
                  visibleIdx+1, summary.c_str(), ni);
 
-        bool highlighted = isSelected || isCurrent;
+        bool highlighted = isSelected || isCurrent || isErrorStep;
         ImGuiSelectableFlags selFlags =
             ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick;
         if (ImGui::Selectable(label, highlighted, selFlags)) {
@@ -908,7 +968,10 @@ void ActivityEditorWidget::Render(Workflow& wf, int currentStep) {
             }
         }
 
-        if (!a.enabled && !isCurrent) ImGui::PopStyleColor();
+        if (isErrorStep && ImGui::IsItemHovered())
+            ImGui::SetTooltip("The workflow was TERMINATED at this step (see Log)");
+        if (isErrorAncestor || (!a.enabled && !isCurrent)) ImGui::PopStyleColor();
+        if (isErrorStep)             ImGui::PopStyleColor(3);
         if (isCurrent)               ImGui::PopStyleColor(3);
 
         // Drag-drop source
@@ -1452,7 +1515,7 @@ void ActivityEditorWidget::StartSnip() {
 // ── Modal editor ──────────────────────────────────────────────────────────────
 
 void ActivityEditorWidget::RenderModal(Workflow& wf) {
-    ImGui::SetNextWindowSize(ImVec2(500, 460), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(540, 480), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("##actmodal", nullptr, ImGuiWindowFlags_NoResize)) return;
 
     ImGui::Text(m_editIdx < 0 ? "Add Activity" : "Edit Activity");
@@ -1469,10 +1532,27 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
         applyRelDefault();
     }
 
+    // Variables available to dropdowns: everything the workflow defines plus
+    // whatever the (possibly not yet added) draft defines itself
+    m_varNames.clear();
+    CollectVariableNames(wf.activities, m_varNames);
+    {
+        std::vector<Activity> draftOnly{m_draft};
+        CollectVariableNames(draftOnly, m_varNames);
+    }
+    m_varNamesOther.clear();
+    CollectVariableNames(wf.activities, m_varNamesOther, m_draft.id);
+    if (m_nameExistingDraftId != m_draft.id) {
+        m_nameExistingDraftId = m_draft.id;
+        m_nameExisting.clear();
+    }
+
     int dispIdx = VariantToDisplayIdx(m_draft.data);
     if (dispIdx < 0) dispIdx = 0; // hidden type (pixel_check) → show as first
     if (ImGui::Combo("Type", &dispIdx, kTypes, kNumTypes)) {
         m_draft.data       = DefaultData(dispIdx);
+        m_draft.var_bind.clear();
+        m_nameExisting.clear();
         applyRelDefault();
         m_keyCaptureActive = false;
         m_scrollCapture    = false;
@@ -1489,6 +1569,12 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type of action to perform");
     ImGui::Checkbox("Enabled", &m_draft.enabled);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The checkbox in front of a field switches it from a fixed value\n"
+                          "to a variable dropdown. A number field bound to a variable that is\n"
+                          "not set or not an integer TERMINATES the workflow at run time.");
     ImGui::Separator();
 
     float fieldsH = ImGui::GetContentRegionAvail().y
@@ -1531,10 +1617,75 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
     ImGui::EndPopup();
 }
 
+// ── Variable widgets ──────────────────────────────────────────────────────────
+
+bool ActivityEditorWidget::VarCombo(const char* label, std::string& name) {
+    bool known = std::find(m_varNames.begin(), m_varNames.end(), name) != m_varNames.end();
+    std::string preview = name.empty() ? "(select variable)"
+                        : known        ? name
+                                       : name + " (undefined)";
+    bool changed = false;
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::BeginCombo(label, preview.c_str())) {
+        if (m_varNames.empty())
+            ImGui::TextDisabled("No variables defined in this workflow");
+        for (auto& n : m_varNames) {
+            bool sel = (n == name);
+            if (ImGui::Selectable(n.c_str(), sel)) { name = n; changed = true; }
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+void ActivityEditorWidget::VarNameInput(const char* label, std::string& name) {
+    ImGui::PushID(label);
+    auto it = m_nameExisting.find(label);
+    if (it == m_nameExisting.end()) {
+        bool existing = !name.empty() &&
+            std::find(m_varNamesOther.begin(), m_varNamesOther.end(), name) != m_varNamesOther.end();
+        it = m_nameExisting.emplace(label, existing).first;
+    }
+    ImGui::Checkbox("##existing", &it->second);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Checked: pick an existing variable\nUnchecked: type a (new) variable name");
+    ImGui::SameLine();
+    if (it->second) {
+        VarCombo(label, name);
+    } else {
+        char buf[64]{};
+        strncpy(buf, name.c_str(), sizeof(buf)-1);
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::InputText(label, buf, sizeof(buf))) name = buf;
+    }
+    ImGui::PopID();
+}
+
 // ── Activity field rendering ──────────────────────────────────────────────────
 
 void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workflow& wf) {
     bool isGlobal = (wf.window.type == WindowTarget::Type::Global);
+    auto& bindMap = m_draft.var_bind;   // data is always m_draft.data
+
+    // Leading checkbox switching a field between its literal widget and a
+    // variable dropdown (stored in Activity::var_bind under `key`)
+    auto bindable = [&](const char* key, const char* label, auto&& literal) {
+        ImGui::PushID(key);
+        bool bound = bindMap.count(key) > 0;
+        if (ImGui::Checkbox("##bind", &bound)) {
+            if (bound) bindMap[key] = m_varNames.empty() ? std::string() : m_varNames.front();
+            else       bindMap.erase(key);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use a variable for this field");
+        ImGui::SameLine();
+        if (bound) VarCombo(label, bindMap[key]);
+        else       literal();
+        ImGui::PopID();
+    };
+    auto bInt = [&](const char* key, const char* label, int& val) {
+        bindable(key, label, [&] { ImGui::SetNextItemWidth(120); ImGui::InputInt(label, &val); });
+    };
 
     std::visit([&](auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -1559,14 +1710,14 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::SetNextItemWidth(100);
             if (ImGui::Combo("Button", &idx, BtnNames, 3)) b = (MouseButton)idx;
         };
-        auto delayFields = [](int& dm, int& dr) {
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &dm);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Random range (ms)", &dr);
+        auto delayFields = [&](int& dm, int& dr) {
+            bInt("delay_ms",      "Delay after (ms)",  dm);
+            bInt("delay_rand_ms", "Random range (ms)", dr);
             dm = std::max(0,dm); dr = std::max(0,dr);
         };
         auto xyPick = [&](int& x, int& y, PickStage stage) {
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("X", &x);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y", &y);
+            bInt("x", "X", x);
+            bInt("y", "Y", y);
             if (ImGui::Button("Pick position##xy")) BeginPick(wf, stage);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click then hover over screen to pick");
         };
@@ -1576,8 +1727,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             xyPick(v.x, v.y, PickStage::Single);
             ImGui::Checkbox("Smooth move", &v.smooth_move);
             if (v.smooth_move) {
-                ImGui::SetNextItemWidth(120);
-                ImGui::InputInt("Duration ms##smooth", &v.smooth_duration_ms);
+                bInt("smooth_duration_ms", "Duration ms##smooth", v.smooth_duration_ms);
                 if (v.smooth_duration_ms < 10) v.smooth_duration_ms = 10;
             }
             delayFields(v.delay_ms, v.delay_rand_ms);
@@ -1591,22 +1741,22 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
 
         } else if constexpr (std::is_same_v<T,MouseDragActivity>) {
             posMode(v.pos_mode);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("From X", &v.from_x);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("From Y", &v.from_y);
+            bInt("from_x", "From X", v.from_x);
+            bInt("from_y", "From Y", v.from_y);
             ImGui::TextDisabled("  ----->");
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("To X", &v.to_x);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("To Y", &v.to_y);
+            bInt("to_x", "To X", v.to_x);
+            bInt("to_y", "To Y", v.to_y);
             if (ImGui::Button("Pick drag##drag")) BeginPick(wf, PickStage::DragFrom);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click start point, then click end point");
             btnCombo(v.button);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
+            bInt("duration_ms", "Duration (ms)", v.duration_ms);
             v.duration_ms = std::max(1, v.duration_ms);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,MouseScrollActivity>) {
             posMode(v.pos_mode);
             xyPick(v.x, v.y, PickStage::Single);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delta X", &v.delta_x);
+            bInt("delta_x", "Delta X", v.delta_x);
             if (m_scrollCapture) {
                 m_scrollAccum += ImGui::GetIO().MouseWheel;
                 ImGui::TextColored(ImVec4(1,0.9f,0.3f,1), "Scroll now... delta Y: %d", (int)m_scrollAccum);
@@ -1616,10 +1766,10 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel##sc")) { m_scrollCapture = false; m_scrollAccum = 0.f; }
             } else {
-                ImGui::SetNextItemWidth(120); ImGui::InputInt("Delta Y", &v.delta_y);
+                bInt("delta_y", "Delta Y", v.delta_y);
                 if (ImGui::Button("Capture scroll##sc")) { m_scrollCapture = true; m_scrollAccum = 0.f; }
             }
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,KeyPressActivity>) {
             if (m_keyCaptureActive) {
@@ -1644,11 +1794,15 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                     break;
                 }
             } else {
-                static char keyBuf[64]{};
-                strncpy(keyBuf, v.key.c_str(), sizeof(keyBuf)-1);
-                if (ImGui::InputText("Key##kp", keyBuf, sizeof(keyBuf))) v.key = keyBuf;
+                bindable("key", "Key##kp", [&] {
+                    static char keyBuf[64]{};
+                    strncpy(keyBuf, v.key.c_str(), sizeof(keyBuf)-1);
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::InputText("Key##kp", keyBuf, sizeof(keyBuf))) v.key = keyBuf;
+                    ImGui::SameLine();
+                    if (ImGui::Button("Capture key##kp")) m_keyCaptureActive = true;
+                });
                 ImGui::TextDisabled("e.g. space, f1, a, enter");
-                if (ImGui::Button("Capture key##kp")) m_keyCaptureActive = true;
                 ImGui::Text("Modifiers:");
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", v.modifiers.empty() ? "(none)" : [&]{
@@ -1658,17 +1812,19 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             delayFields(v.delay_ms, v.delay_rand_ms);
 
         } else if constexpr (std::is_same_v<T,TypeStringActivity>) {
-            static char textBuf[512]{};
-            strncpy(textBuf, v.text.c_str(), sizeof(textBuf)-1);
-            if (ImGui::InputTextMultiline("Text", textBuf, sizeof(textBuf), ImVec2(0,80)))
-                v.text = textBuf;
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Char delay (ms)", &v.delay_between_chars_ms);
+            bindable("text", "Text", [&] {
+                static char textBuf[512]{};
+                strncpy(textBuf, v.text.c_str(), sizeof(textBuf)-1);
+                if (ImGui::InputTextMultiline("Text", textBuf, sizeof(textBuf), ImVec2(-60,80)))
+                    v.text = textBuf;
+            });
+            bInt("delay_between_chars_ms", "Char delay (ms)", v.delay_between_chars_ms);
             v.delay_between_chars_ms = std::max(0, v.delay_between_chars_ms);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,WaitActivity>) {
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Duration (ms)", &v.duration_ms);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Random range (ms)", &v.random_range_ms);
+            bInt("duration_ms",     "Duration (ms)",     v.duration_ms);
+            bInt("random_range_ms", "Random range (ms)", v.random_range_ms);
             v.duration_ms     = std::max(0, v.duration_ms);
             v.random_range_ms = std::max(0, v.random_range_ms);
 
@@ -1709,10 +1865,10 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             if (ImGui::Button("Pick range##prc")) BeginPick(wf, PickStage::RangeFrom);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick start then end corner (no screenshot)");
 
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("X1##prc", &v.x1);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y1##prc", &v.y1);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("X2##prc", &v.x2);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Y2##prc", &v.y2);
+            bInt("x1", "X1##prc", v.x1);
+            bInt("y1", "Y1##prc", v.y1);
+            bInt("x2", "X2##prc", v.x2);
+            bInt("y2", "Y2##prc", v.y2);
 
             if (v.sample.empty()) {
                 ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "Sample: (none)");
@@ -1756,15 +1912,15 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 }
             }
 
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Tolerance##prc", &v.tolerance);
+            bInt("tolerance", "Tolerance##prc", v.tolerance);
             v.tolerance = std::max(0, std::min(255, v.tolerance));
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Match percent##prc", &v.match_percent);
+            bInt("match_percent", "Match percent##prc", v.match_percent);
             v.match_percent = std::max(0, std::min(100, v.match_percent));
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Retry interval (ms)##prc", &v.retry_interval_ms);
+            bInt("retry_interval_ms", "Retry interval (ms)##prc", v.retry_interval_ms);
             v.retry_interval_ms = std::max(0, v.retry_interval_ms);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Retry timeout (ms, 0=once)##prc", &v.retry_timeout_ms);
+            bInt("retry_timeout_ms", "Retry timeout (ms, 0=once)##prc", v.retry_timeout_ms);
             v.retry_timeout_ms = std::max(0, v.retry_timeout_ms);
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##prc", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##prc", v.delay_ms);
             ImGui::TextDisabled("Children (match/no-match) are edited inline in the activity list.");
 
         } else if constexpr (std::is_same_v<T,SystemActionActivity>) {
@@ -1777,7 +1933,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::BeginDisabled(!forceApplies);
             ImGui::Checkbox("Force (skip save dialogs)", &v.force);
             ImGui::EndDisabled();
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
             v.delay_ms = std::max(0, v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,RunWorkflowActivity>) {
@@ -1803,7 +1959,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 strncpy(idBuf, v.workflow_id.c_str(), sizeof(idBuf)-1);
                 if (ImGui::InputText("Workflow ID", idBuf, sizeof(idBuf))) v.workflow_id = idBuf;
             }
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,RunActivityActivity>) {
             // Selectable list of all activities in the workflow
@@ -1829,46 +1985,45 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 ImGui::TextDisabled("ID: %.24s", v.activity_id.c_str());
             else
                 ImGui::TextColored(ImVec4(1,0.5f,0.3f,1), "No activity selected");
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,SetVariableActivity>) {
-            static char nameBuf[64]{};
-            strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
-            if (ImGui::InputText("Variable name##sv", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
+            VarNameInput("Variable name##sv", v.name);
 
             int opIdx = (int)v.op;
             ImGui::SetNextItemWidth(120);
             if (ImGui::Combo("Operation##sv", &opIdx, VarOpNames, 4)) v.op = (VarOp)opIdx;
 
             if (v.op == VarOp::Set) {
-                static char valBuf[256]{};
-                strncpy(valBuf, v.value.c_str(), sizeof(valBuf)-1);
-                if (ImGui::InputText("Value##sv", valBuf, sizeof(valBuf))) v.value = valBuf;
+                bindable("value", "Value##sv", [&] {
+                    static char valBuf[256]{};
+                    strncpy(valBuf, v.value.c_str(), sizeof(valBuf)-1);
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::InputText("Value##sv", valBuf, sizeof(valBuf))) v.value = valBuf;
+                });
+                if (v.value.empty() && !bindMap.count("value"))
+                    ImGui::TextDisabled("Empty value clears the variable (it becomes 'not set').");
             } else if (v.op == VarOp::Increment || v.op == VarOp::Decrement) {
-                ImGui::SetNextItemWidth(120); ImGui::InputInt("Step##sv", &v.step);
+                bInt("step", "Step##sv", v.step);
                 v.step = std::max(1, v.step);
             } else if (v.op == VarOp::Random) {
-                ImGui::SetNextItemWidth(120); ImGui::InputInt("Min##sv", &v.rand_min);
-                ImGui::SetNextItemWidth(120); ImGui::InputInt("Max##sv", &v.rand_max);
+                bInt("rand_min", "Min##sv", v.rand_min);
+                bInt("rand_max", "Max##sv", v.rand_max);
                 if (v.rand_max < v.rand_min) v.rand_max = v.rand_min;
             }
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##sv", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##sv", v.delay_ms);
 
         } else if constexpr (std::is_same_v<T,LoopActivity>) {
             static char nameBuf[64]{};
             strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
             if (ImGui::InputText("Name##lp", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Count (0=infinite)##lp", &v.count);
+            bInt("count", "Count (0=infinite)##lp", v.count);
             v.count = std::max(0, v.count);
-            static char iterBuf[64]{};
-            strncpy(iterBuf, v.iter_var.c_str(), sizeof(iterBuf)-1);
-            if (ImGui::InputText("Write iteration to var##lp", iterBuf, sizeof(iterBuf)))
-                v.iter_var = iterBuf;
+            VarNameInput("Write iteration to var##lp", v.iter_var);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Variable name to store the current iteration number (1-based).\n"
-                                  "E.g. set to \"i\" and use $i in other activities.\n"
                                   "Leave empty to skip.");
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##lp", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##lp", v.delay_ms);
             ImGui::TextDisabled("Children: edit inline in the activity list.");
 
         } else if constexpr (std::is_same_v<T,IfActivity>) {
@@ -1878,40 +2033,62 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             ImGui::Separator();
             ImGui::Text("Condition:");
             // LHS
-            ImGui::Checkbox("LHS is var##if", &v.cond.lhs_is_var); ImGui::SameLine();
-            static char lhsBuf[64]{}; strncpy(lhsBuf, v.cond.lhs.c_str(), sizeof(lhsBuf)-1);
-            ImGui::SetNextItemWidth(120);
-            if (ImGui::InputText("LHS##if", lhsBuf, sizeof(lhsBuf))) v.cond.lhs = lhsBuf;
+            ImGui::Checkbox("Var##lhs_if", &v.cond.lhs_is_var); ImGui::SameLine();
+            if (v.cond.lhs_is_var) {
+                VarCombo("LHS##if", v.cond.lhs);
+            } else {
+                static char lhsBuf[64]{}; strncpy(lhsBuf, v.cond.lhs.c_str(), sizeof(lhsBuf)-1);
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("LHS##if", lhsBuf, sizeof(lhsBuf))) v.cond.lhs = lhsBuf;
+            }
             // OP
             int opIdx = (int)v.cond.op;
             ImGui::SetNextItemWidth(100);
             if (ImGui::Combo("Op##if", &opIdx, CondOpNames, 7)) v.cond.op = (ConditionOp)opIdx;
             // RHS
-            ImGui::Checkbox("RHS is var##if", &v.cond.rhs_is_var); ImGui::SameLine();
-            static char rhsBuf[64]{}; strncpy(rhsBuf, v.cond.rhs.c_str(), sizeof(rhsBuf)-1);
-            ImGui::SetNextItemWidth(120);
-            if (ImGui::InputText("RHS##if", rhsBuf, sizeof(rhsBuf))) v.cond.rhs = rhsBuf;
+            ImGui::Checkbox("Var##rhs_if", &v.cond.rhs_is_var); ImGui::SameLine();
+            if (v.cond.rhs_is_var) {
+                VarCombo("RHS##if", v.cond.rhs);
+            } else {
+                static char rhsBuf[64]{}; strncpy(rhsBuf, v.cond.rhs.c_str(), sizeof(rhsBuf)-1);
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("RHS##if", rhsBuf, sizeof(rhsBuf))) v.cond.rhs = rhsBuf;
+            }
+            ImGui::TextDisabled("Var checked = variable, unchecked = the typed value itself.");
             ImGui::Separator();
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##if", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##if", v.delay_ms);
             ImGui::TextDisabled("then/else branches: edit inline in the activity list.");
 
         } else if constexpr (std::is_same_v<T,SwitchActivity>) {
             static char nameBuf[64]{};
             strncpy(nameBuf, v.name.c_str(), sizeof(nameBuf)-1);
             if (ImGui::InputText("Name##sw", nameBuf, sizeof(nameBuf))) v.name = nameBuf;
-            static char varBuf[64]{};
-            strncpy(varBuf, v.var_name.c_str(), sizeof(varBuf)-1);
-            if (ImGui::InputText("Variable##sw", varBuf, sizeof(varBuf))) v.var_name = varBuf;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runtime variable to test");
+            ImGui::Checkbox("Var##sw_is_var", &v.var_is_var); ImGui::SameLine();
+            if (v.var_is_var) {
+                VarCombo("Test value##sw", v.var_name);
+            } else {
+                static char varBuf[64]{};
+                strncpy(varBuf, v.var_name.c_str(), sizeof(varBuf)-1);
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("Test value##sw", varBuf, sizeof(varBuf))) v.var_name = varBuf;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Value compared against each case.\n"
+                                  "Var checked = a variable, unchecked = the typed value itself.");
             ImGui::Separator();
             ImGui::Text("Cases:");
             ImGui::BeginChild("##cases_sw", ImVec2(0, 100), true);
             for (int ci = 0; ci < (int)v.cases.size(); ++ci) {
                 ImGui::PushID(ci);
-                static char cvBuf[64]{};
-                strncpy(cvBuf, v.cases[ci].value.c_str(), sizeof(cvBuf)-1);
-                ImGui::SetNextItemWidth(120);
-                if (ImGui::InputText("##cv", cvBuf, sizeof(cvBuf))) v.cases[ci].value = cvBuf;
+                ImGui::Checkbox("Var##cvv", &v.cases[ci].value_is_var); ImGui::SameLine();
+                if (v.cases[ci].value_is_var) {
+                    VarCombo("##cv", v.cases[ci].value);
+                } else {
+                    static char cvBuf[64]{};
+                    strncpy(cvBuf, v.cases[ci].value.c_str(), sizeof(cvBuf)-1);
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::InputText("##cv", cvBuf, sizeof(cvBuf))) v.cases[ci].value = cvBuf;
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X##del_case")) {
                     v.cases.erase(v.cases.begin() + ci); --ci;
@@ -1925,7 +2102,7 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
                 v.cases.push_back(std::move(sc));
             }
             ImGui::Separator();
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##sw", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##sw", v.delay_ms);
             ImGui::TextDisabled("Case bodies: edit inline in the activity list.");
 
         } else if constexpr (std::is_same_v<T,JumpActivity>) {
@@ -1964,9 +2141,23 @@ void ActivityEditorWidget::RenderActivityFields(ActivityData& data, const Workfl
             } else {
                 ImGui::TextColored(ImVec4(1,0.5f,0.3f,1), "No target selected");
             }
-            ImGui::SetNextItemWidth(120); ImGui::InputInt("Delay after (ms)##jmp", &v.delay_ms);
+            bInt("delay_ms", "Delay after (ms)##jmp", v.delay_ms);
             v.delay_ms = std::max(0, v.delay_ms);
             ImGui::TextDisabled("Jumps within the same activity list (body/branch/root).");
+
+        } else if constexpr (std::is_same_v<T,GetMousePositionActivity>) {
+            posMode(v.pos_mode);
+            VarNameInput("X variable##gmp", v.x_var);
+            VarNameInput("Y variable##gmp", v.y_var);
+            ImGui::TextDisabled("Stores the current cursor position into the two variables.");
+            bInt("delay_ms", "Delay after (ms)##gmp", v.delay_ms);
+            v.delay_ms = std::max(0, v.delay_ms);
+
+        } else if constexpr (std::is_same_v<T,ClearVariablesActivity>) {
+            ImGui::TextWrapped("Removes every runtime variable of this workflow "
+                               "(they all become 'not set').");
+            bInt("delay_ms", "Delay after (ms)##clv", v.delay_ms);
+            v.delay_ms = std::max(0, v.delay_ms);
         }
 
     }, data);

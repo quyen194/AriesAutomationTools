@@ -13,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <functional>
+#include <map>
 
 class WorkflowEngine {
 public:
@@ -62,6 +63,12 @@ public:
 
     // Current activity index for a workflow (for UI status bar)
     int  CurrentActivityIndex(const std::string& id) const;
+
+    // Runtime variables of a workflow (last run's values persist until next Start)
+    std::map<std::string, std::string> GetVariables(const std::string& id) const;
+    // True when the last run stopped on a runtime error (TERMINATED)
+    bool IsTerminated(const std::string& id) const;
+    Scheduler::Termination GetTermination(const std::string& id) const;
 
     IWindowFinder* WindowFinder()  { return m_windowFinder.get(); }
     IPixelChecker* PixelChecker()  { return m_pixelChecker.get(); }

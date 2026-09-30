@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <map>
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -23,7 +24,9 @@ struct ActivityEditorWidget {
     void SetOverlayOpacity(float* p) { m_pOverlayOpacity = p; }
 
     // currentStep: index of the currently executing top-level activity (-1 = not running)
-    void Render(Workflow& wf, int currentStep = -1);
+    // errorPath:   activity ids (root -> failing step) of a TERMINATED run, or nullptr
+    void Render(Workflow& wf, int currentStep = -1,
+                const std::vector<std::string>* errorPath = nullptr);
 
     // Called every frame by AppUI regardless of whether main UI is rendering.
     // Runs the snip state machine (manages window hide/show/opacity).
@@ -127,6 +130,21 @@ private:
     // ── Sample image preview texture ──────────────────────────────────────────
     SDL_Texture* m_samplePreviewTex  = nullptr;
     size_t       m_samplePreviewHash = 0;
+
+    // ── Variables (recomputed every frame while the modal is open) ────────────
+    std::vector<std::string> m_varNames;       // every variable known to the workflow + draft
+    std::vector<std::string> m_varNamesOther;  // same, excluding the draft activity itself
+    // "Existing" checkbox state of variable-name inputs, keyed by label; reset per draft
+    std::map<std::string, bool> m_nameExisting;
+    std::string m_nameExistingDraftId;
+    // Id of the failing step we already scrolled to (TERMINATED highlight)
+    std::string m_errorScrolledId;
+
+    // Dropdown of known variables; returns true when the selection changed
+    bool VarCombo(const char* label, std::string& name);
+    // Variable *name* input for fields that define a variable: checkbox switches
+    // between typing a (new) name and picking an existing one
+    void VarNameInput(const char* label, std::string& name);
 
     // ── "No window selected" guard dialog state ───────────────────────────────
     bool m_showNoWindowDlg = false;

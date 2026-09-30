@@ -36,6 +36,14 @@ void WorkflowEngine::Shutdown() {
 
 void WorkflowEngine::SetWorkflows(std::vector<Workflow> wfs) {
     StopAll();
+
+    // Keep variables / termination info of the last run across the rebuild
+    struct SavedState { std::map<std::string, std::string> vars; Scheduler::Termination term; };
+    std::map<std::string, SavedState> saved;
+    for (size_t i = 0; i < m_workflows.size() && i < m_schedulers.size(); ++i)
+        saved[m_workflows[i].id] = {m_schedulers[i]->GetVariables(),
+                                    m_schedulers[i]->GetTermination()};
+
     m_workflows  = std::move(wfs);
     m_schedulers.clear();
     for (auto& wf : m_workflows) {
@@ -43,6 +51,10 @@ void WorkflowEngine::SetWorkflows(std::vector<Workflow> wfs) {
             wf, [this](const WindowTarget& wt, int x, int y) {
                 return ResolveCoords(wt, x, y);
             }));
+        auto it = saved.find(wf.id);
+        if (it != saved.end())
+            m_schedulers.back()->RestoreState(std::move(it->second.vars),
+                                              std::move(it->second.term));
     }
     std::lock_guard<std::mutex> lk(m_pendingMutex);
     m_pendingStarts.assign(m_workflows.size(), false);
@@ -192,6 +204,24 @@ int WorkflowEngine::CurrentActivityIndex(const std::string& id) const {
     for (size_t i = 0; i < m_workflows.size(); ++i)
         if (m_workflows[i].id == id) return m_schedulers[i]->CurrentActivityIndex();
     return -1;
+}
+
+std::map<std::string, std::string> WorkflowEngine::GetVariables(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->GetVariables();
+    return {};
+}
+
+bool WorkflowEngine::IsTerminated(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->IsTerminated();
+    return false;
+}
+
+Scheduler::Termination WorkflowEngine::GetTermination(const std::string& id) const {
+    for (size_t i = 0; i < m_workflows.size(); ++i)
+        if (m_workflows[i].id == id) return m_schedulers[i]->GetTermination();
+    return {};
 }
 
 void WorkflowEngine::SetStartAllHotkey(const std::string& key_name) {

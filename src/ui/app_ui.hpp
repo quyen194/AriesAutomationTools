@@ -40,6 +40,8 @@ private:
     void RenderQuitConfirmModal();
     void RenderHotkeyConfigWindow();
     void RenderAboutDialog();
+    void RenderVariablesWindow();
+    void RenderLogPanel(float height);
 
     void AddWorkflow();
     void DuplicateWorkflow(const std::string& id);
@@ -135,6 +137,13 @@ private:
     SDL_Texture*          m_trigSampleTex    = nullptr;
     size_t                m_trigSampleHash   = 0;
     void RenderTriggerSnipOverlay();
+
+    // Variables viewer window (workflow id being shown; empty = closed)
+    std::string   m_varsWfId;
+
+    // Bottom log panel
+    bool          m_showLog       = true;
+    uint64_t      m_logSeenVersion = 0;
 
     // Workflow delete confirmation
     std::string   m_confirmDeleteWfId;

@@ -11,12 +11,14 @@ Define workflows of mouse, keyboard, and wait actions that run automatically on 
 - **11 activity types** — mouse move, click, drag, scroll; key press, type string, wait, pixel check, pixel range check (region/image compare), run workflow, system action
 - **Window targeting** — run actions on the global screen or scoped to a specific window (by title, class, or spy-pick)
 - **Smart detection** — auto-pauses when real user input is detected; resumes after a configurable idle period; optional start-delay waits until the system is idle before launching
+- **Variables** — Set Variable / Loop iteration / Get Mouse Position store runtime variables; any field of any activity can take its value from a variable instead of a fixed value; a **Variables** window shows every variable and its current value
+- **Run log** — bottom Log panel plus `aries.log` in the app data folder; a runtime error (e.g. a number field bound to a text variable) stops the workflow as **TERMINATED**, highlights the failing step and logs the exact cause
 - **Auto start** — per-workflow checkbox (next to *Enabled*) that starts the workflow automatically when the app launches
 - **Record mode** — global hook captures real mouse/keyboard actions, review and append to any workflow
 - **3 start triggers** — Manual, Schedule (cron), or Pixel color watch
 - **Per-workflow & global hotkeys** — bind Start / Stop / Pause / Resume to OS-level hotkeys per workflow, plus global Start All / Stop All / Pause All / Resume All / Start Rec / Stop Rec hotkeys
 - **Pause/Resume** — pause individual workflows or all at once without losing the current activity position; distinct from stopping
-- **Workflow status badges** — live indicators: `[~]` STARTING (cyan), `[R]` RUNNING (green), `[!]` INTERRUPTED by smart detection (orange), `[P]` PAUSED (yellow), `[W]` WAITING between repeats (teal)
+- **Workflow status badges** — live indicators: `[~]` STARTING (cyan), `[R]` RUNNING (green), `[!]` INTERRUPTED by smart detection (orange), `[P]` PAUSED (yellow), `[W]` WAITING between repeats (teal), `[X]` TERMINATED by a runtime error (red)
 - **System tray** — minimize to tray with animated icon; right-click context menu for Show/Hide, Start/Stop/Pause/Resume All, and per-workflow controls
 - **Portable single EXE** — no installer, statically linked, config stored in the per-user app data folder (`%APPDATA%\AriesAutomationTools\config.json` on Windows); single-instance enforced
 
@@ -99,6 +101,16 @@ Click **`+ Add`** in the Activities section to open the activity editor modal. T
 | `pixel_range_check` | Like `pixel_check`, but over a rectangular region: pick a start and end corner, capture the rect as a reference image (stored base64 in config), then at run time compare the live screen against it (per-channel tolerance + % of pixels that must match) |
 | `run_workflow`   | Trigger another workflow by ID |
 | `system_action`  | Perform a system-level OS action: Shutdown, Restart, Sleep, Hibernate, Lock, or Log out. Optional **Force** flag skips save dialogs (Shutdown / Restart / Hibernate / Log out only). OS-specific: Windows uses `shutdown` / `rundll32`; Linux uses `systemctl` / `loginctl`; macOS uses `pmset` / `osascript`. |
+| `get_mouse_position` | Store the current cursor X / Y into two variables (absolute, or relative to the target window) |
+| `clear_variables`    | Remove every runtime variable of the workflow (they become "not set") |
+
+#### Variables
+
+- Variables are created by `set_variable`, a `loop`'s *iteration var* and `get_mouse_position`. They persist across repeats of the workflow and are only reset by `clear_variables` or by starting the workflow again. `set_variable` with an empty value clears that variable.
+- **Variable binding:** the checkbox in front of a field switches it from a fixed value to a dropdown of the workflow's variables. For number fields the variable must hold an integer (e.g. `-12`); if it is not set or holds text, the workflow stops as **TERMINATED** at that step and the reason is written to the log. `increment` / `decrement` on a text variable is also an error.
+- For names that *define* a variable (Set Variable name, Loop iteration var, Get Mouse Position X / Y), the checkbox switches between typing a new name and picking an existing variable.
+- `if` / `switch`: with **Var** checked the operand is a variable; unchecked, the typed text is the value compared.
+- The **Variables** button in the workflow header opens a table (#, name, value) of every variable; values update live while running and stay visible after the run ends.
 
 **Position mode**: `absolute` = screen coordinates. `relative` = coordinates within the target window's client area. New position-based activities default to `relative` when the workflow has a target window. When picking in `relative` mode the target window must be open; picked screen points are converted to client-area offsets automatically.
 
@@ -208,7 +220,7 @@ This prevents the tool from fighting with your own mouse/keyboard during active 
 - **`>> Start All`** / **`[Stop All]`** / **`|| Pause All`** / **`> Resume All`** — apply to all workflows at once (also available in the **Workflows** menu and the tray context menu).
 - **F9** (or your configured hotkey) — if any workflows are running, toggles global pause/resume; if none are running, starts all enabled workflows.
 
-**Status badges** in the workflow list show live state: `[~]` STARTING · `[R]` RUNNING · `[W]` WAITING (between repeats) · `[!]` INTERRUPTED (smart detection) · `[P]` PAUSED.
+**Status badges** in the workflow list show live state: `[~]` STARTING · `[R]` RUNNING · `[W]` WAITING (between repeats) · `[!]` INTERRUPTED (smart detection) · `[P]` PAUSED · `[X]` TERMINATED (runtime error; the failing step is highlighted red and the cause is shown in the Log panel and `aries.log`).
 
 **Hotkeys** — open the **Hotkey Configuration** window to bind per-workflow Start/Stop/Pause/Resume hotkeys and global action hotkeys (Start All, Stop All, Pause All, Resume All, Start Rec, Stop Rec).
 
@@ -242,6 +254,8 @@ AriesAutomationTools/
     │   ├── workflow.hpp         # All data structs (ActivityData variant, Workflow, AppConfig)
     │   ├── engine.hpp/cpp       # WorkflowEngine: owns schedulers, smart-detection monitor thread
     │   ├── scheduler.hpp/cpp    # Per-workflow background thread, executes activity sequence
+    │   ├── variables.hpp        # Variable-bindable field table, strict int parsing, variable name discovery
+    │   ├── logger.hpp/cpp       # Thread-safe log (Log panel + aries.log)
     │   ├── record_engine.hpp/cpp# Global WH_MOUSE_LL/WH_KEYBOARD_LL hook capture (Windows)
     │   └── trigger_manager.hpp/cpp # 500ms poll loop for Schedule and Pixel triggers
     │

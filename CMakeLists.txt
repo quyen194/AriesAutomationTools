@@ -93,6 +93,7 @@ add_executable(AriesAutomationTools
     src/core/scheduler.cpp
     src/core/record_engine.cpp
     src/core/trigger_manager.cpp
+    src/core/logger.cpp
     src/input/key_map.cpp
     src/config/config_manager.cpp
     src/ui/app_ui.cpp

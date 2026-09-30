@@ -225,6 +225,11 @@ static json SerializeActivity(const Activity& a) {
     json j;
     j["id"]      = a.id;
     j["enabled"] = a.enabled;
+    if (!a.var_bind.empty()) {
+        json vb = json::object();
+        for (auto& [key, var] : a.var_bind) vb[key] = var;
+        j["var_bind"] = vb;
+    }
 
     std::visit([&](auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -356,10 +361,12 @@ static json SerializeActivity(const Activity& a) {
             j["type"]          = "switch";
             j["name"]          = v.name;
             j["var_name"]      = v.var_name;
+            j["var_is_var"]    = v.var_is_var;
             json cases = json::array();
             for (auto& sc : v.cases) {
                 cases.push_back({
-                    {"value", sc.value},
+                    {"value",        sc.value},
+                    {"value_is_var", sc.value_is_var},
                     {"body",  SerializeActivityList(sc.body ? *sc.body : std::vector<Activity>{})}
                 });
             }
@@ -371,6 +378,17 @@ static json SerializeActivity(const Activity& a) {
             j["type"]          = "jump";
             j["target_id"]     = v.target_id;
             j["delay_after_ms"]= v.delay_ms;
+
+        } else if constexpr (std::is_same_v<T, GetMousePositionActivity>) {
+            j["type"]          = "get_mouse_position";
+            j["position_mode"] = PosModeToStr(v.pos_mode);
+            j["x_var"]         = v.x_var;
+            j["y_var"]         = v.y_var;
+            j["delay_after_ms"]= v.delay_ms;
+
+        } else if constexpr (std::is_same_v<T, ClearVariablesActivity>) {
+            j["type"]          = "clear_variables";
+            j["delay_after_ms"]= v.delay_ms;
         }
     }, a.data);
 
@@ -381,6 +399,10 @@ static Activity DeserializeActivity(const json& j) {
     Activity a;
     a.id      = j.value("id", "");
     a.enabled = j.value("enabled", true);
+    if (j.contains("var_bind") && j["var_bind"].is_object())
+        for (auto& [key, var] : j["var_bind"].items())
+            if (var.is_string() && !var.get<std::string>().empty())
+                a.var_bind[key] = var.get<std::string>();
 
     std::string type = j.value("type", "");
 
@@ -534,11 +556,13 @@ static Activity DeserializeActivity(const json& j) {
     } else if (type == "switch") {
         SwitchActivity v;
         v.name     = j.value("name", "");
-        v.var_name = j.value("var_name", "");
+        v.var_name   = j.value("var_name", "");
+        v.var_is_var = j.value("var_is_var", true);
         if (j.contains("cases") && j["cases"].is_array()) {
             for (auto& sc : j["cases"]) {
                 SwitchCase c;
-                c.value = sc.value("value", "");
+                c.value        = sc.value("value", "");
+                c.value_is_var = sc.value("value_is_var", false);
                 c.body  = std::make_shared<std::vector<Activity>>(
                               DeserializeActivityList(sc.value("body", json::array())));
                 v.cases.push_back(std::move(c));
@@ -553,6 +577,19 @@ static Activity DeserializeActivity(const json& j) {
         JumpActivity v;
         v.target_id = j.value("target_id", "");
         v.delay_ms  = j.value("delay_after_ms", 0);
+        a.data = v;
+
+    } else if (type == "get_mouse_position") {
+        GetMousePositionActivity v;
+        v.pos_mode = StrToPosMode(j.value("position_mode", "absolute"));
+        v.x_var    = j.value("x_var", "");
+        v.y_var    = j.value("y_var", "");
+        v.delay_ms = j.value("delay_after_ms", 0);
+        a.data = v;
+
+    } else if (type == "clear_variables") {
+        ClearVariablesActivity v;
+        v.delay_ms = j.value("delay_after_ms", 0);
         a.data = v;
 
     } else {

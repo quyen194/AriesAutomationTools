@@ -30,6 +30,8 @@ void WorkflowListWidget::Render(
                 badge = "[!]"; badgeColor = ImVec4(1.0f, 0.55f, 0.1f, 1.f); break;
             case WorkflowStatus::Paused:
                 badge = "[P]"; badgeColor = ImVec4(1.0f, 0.85f, 0.0f, 1.f); break;
+            case WorkflowStatus::Terminated:
+                badge = "[X]"; badgeColor = ImVec4(1.0f, 0.3f, 0.3f, 1.f); break;
             default:
                 badge = "[ ]"; badgeColor = ImVec4(0.5f, 0.5f, 0.5f, 1.f); break;
         }
@@ -39,7 +41,6 @@ void WorkflowListWidget::Render(
         ImGui::SameLine();
 
         // Name color/hover based on status
-        bool active = (st != WorkflowStatus::Idle);
         if (!wf.enabled) {
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.45f, 0.45f, 0.45f, 1.f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f,  0.3f,  0.3f,  0.6f));
@@ -58,6 +59,9 @@ void WorkflowListWidget::Render(
         } else if (st == WorkflowStatus::Paused) {
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f,  0.9f,  0.2f,  1.f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.5f,  0.45f, 0.05f, 0.5f));
+        } else if (st == WorkflowStatus::Terminated) {
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f,  0.45f, 0.45f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.5f,  0.1f,  0.1f,  0.5f));
         } else {
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.85f, 0.85f, 0.85f, 1.f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.5f,  0.25f, 0.4f));
@@ -79,6 +83,8 @@ void WorkflowListWidget::Render(
                 ImGui::SetTooltip("Interrupted by smart detection (user is active)");
             else if (st == WorkflowStatus::Starting)
                 ImGui::SetTooltip("Waiting for user idle before starting");
+            else if (st == WorkflowStatus::Terminated)
+                ImGui::SetTooltip("Terminated by a runtime error (see Log)");
         }
     }
     ImGui::EndChild();

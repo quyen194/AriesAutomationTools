@@ -4,6 +4,10 @@
 #include <thread>
 #include <functional>
 #include <chrono>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
 
 // Runs a single Workflow's activity sequence on a background thread.
 // Call Start() to begin; Stop() to interrupt and join.
@@ -38,6 +42,22 @@ public:
     // Read-only view of current activity index (for UI status)
     int CurrentActivityIndex() const { return m_currentIndex.load(); }
 
+    // Snapshot of the runtime variables (kept after the run ends until next Start)
+    std::map<std::string, std::string> GetVariables() const;
+
+    // Termination by a runtime error: the workflow stopped at the failing step.
+    // Cleared on the next Start().
+    struct Termination {
+        bool                     terminated = false;
+        std::vector<std::string> path;     // activity ids from root to the failing step
+        std::string              message;
+    };
+    Termination GetTermination() const;
+    bool IsTerminated() const { return m_terminated.load(); }
+
+    // Carry runtime state over when the engine rebuilds its schedulers
+    void RestoreState(std::map<std::string, std::string> vars, Termination term);
+
 private:
     void Run();
     void SleepInterruptible(int ms);
@@ -54,4 +74,9 @@ private:
     std::atomic<int>     m_currentIndex{-1};
     std::atomic<int>     m_repeatIntervalMs{0};
     std::atomic<int64_t> m_startTimeMs{0};
+    std::atomic<bool>    m_terminated{false};
+
+    mutable std::mutex                 m_stateMutex;   // guards m_vars + m_termination
+    std::map<std::string, std::string> m_vars;
+    Termination                        m_termination;
 };

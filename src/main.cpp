@@ -1,5 +1,6 @@
 #include "ui/app_ui.hpp"
 #include "config/config_manager.hpp"
+#include "core/logger.hpp"
 #include "single_instance.hpp"
 #include "icon_data.hpp"
 #include "imgui.h"
@@ -86,6 +87,9 @@ int main(int argc, char** argv) {
     // Keep imgui.ini with the rest of the app data (not the working directory)
     static const std::string s_iniPath = ConfigManager::DataDir() + "/imgui.ini";
     io.IniFilename = s_iniPath.c_str();
+
+    // Workflow run / error log (also shown in the Log panel)
+    Logger::SetFile(ConfigManager::DataDir() + "/aries.log");
 
     // Style
     ImGui::StyleColorsDark();

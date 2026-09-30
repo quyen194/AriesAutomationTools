@@ -1,4 +1,6 @@
 #include "scheduler.hpp"
+#include "variables.hpp"
+#include "logger.hpp"
 #include "input/input_simulator.hpp"
 #include "window/pixel_checker.hpp"
 #include <cstdlib>
@@ -24,8 +26,9 @@ enum class FlowSignal { Continue, SkipIter, Stop };
 
 // ── Runtime variable helpers ──────────────────────────────────────────────────
 
-static std::string ResolveValue(const std::string& expr, bool is_var,
-    const std::unordered_map<std::string,std::string>& vars) {
+using VarMap = std::map<std::string,std::string>;
+
+static std::string ResolveValue(const std::string& expr, bool is_var, const VarMap& vars) {
     if (is_var) {
         auto it = vars.find(expr);
         return it != vars.end() ? it->second : "";
@@ -33,8 +36,7 @@ static std::string ResolveValue(const std::string& expr, bool is_var,
     return expr;
 }
 
-static bool EvalCondition(const Condition& c,
-    const std::unordered_map<std::string,std::string>& vars) {
+static bool EvalCondition(const Condition& c, const VarMap& vars) {
     std::string lv = ResolveValue(c.lhs, c.lhs_is_var, vars);
     std::string rv = ResolveValue(c.rhs, c.rhs_is_var, vars);
 
@@ -55,6 +57,18 @@ static bool EvalCondition(const Condition& c,
     }
 }
 
+static const char* ActivityTypeName(const ActivityData& d) {
+    static const char* kNames[] = {
+        "mouse_move", "mouse_click", "mouse_drag", "mouse_scroll", "key_press",
+        "type_string", "wait", "pixel_check", "pixel_range_check", "run_workflow",
+        "system_action", "run_activity", "set_variable", "loop", "if", "switch",
+        "jump", "get_mouse_position", "clear_variables"
+    };
+    static_assert(sizeof(kNames) / sizeof(kNames[0]) == std::variant_size_v<ActivityData>,
+                  "ActivityTypeName out of sync with ActivityData");
+    return kNames[d.index()];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 Scheduler::Scheduler(const Workflow& wf, CoordResolver resolver)
@@ -66,6 +80,15 @@ Scheduler::~Scheduler() { Stop(); }
 
 void Scheduler::Start() {
     if (m_running.load()) return;
+    // Thread may have finished on its own (repeat count reached / terminated)
+    if (m_thread.joinable()) m_thread.join();
+    {
+        std::lock_guard<std::mutex> lk(m_stateMutex);
+        m_vars.clear();
+        m_termination = Termination{};
+    }
+    m_terminated   = false;
+    m_currentIndex = -1;
     m_stopFlag = false;
     m_running  = true;
     m_startTimeMs.store(
@@ -79,6 +102,23 @@ void Scheduler::Stop() {
     if (m_thread.joinable()) m_thread.join();
     m_running      = false;
     m_currentIndex = -1;
+}
+
+std::map<std::string, std::string> Scheduler::GetVariables() const {
+    std::lock_guard<std::mutex> lk(m_stateMutex);
+    return m_vars;
+}
+
+Scheduler::Termination Scheduler::GetTermination() const {
+    std::lock_guard<std::mutex> lk(m_stateMutex);
+    return m_termination;
+}
+
+void Scheduler::RestoreState(std::map<std::string, std::string> vars, Termination term) {
+    std::lock_guard<std::mutex> lk(m_stateMutex);
+    m_vars        = std::move(vars);
+    m_termination = std::move(term);
+    m_terminated  = m_termination.terminated;
 }
 
 void Scheduler::SleepInterruptible(int ms) {
@@ -106,8 +146,68 @@ void Scheduler::Run() {
 
     int loopsLeft = m_workflow.repeat_count;
 
-    // Runtime variables — cleared at the start of each outer-loop iteration
-    std::unordered_map<std::string,std::string> variables;
+    // Runtime variables live in m_vars. Only this thread writes them (under
+    // m_stateMutex so the UI can snapshot); reads here need no lock.
+    const VarMap& variables = m_vars;
+    auto setVar = [&](const std::string& name, const std::string& value) {
+        if (name.empty()) return;
+        std::lock_guard<std::mutex> lk(m_stateMutex);
+        m_vars[name] = value;
+    };
+    auto eraseVar = [&](const std::string& name) {
+        std::lock_guard<std::mutex> lk(m_stateMutex);
+        m_vars.erase(name);
+    };
+
+    // Execution path (activity ids / 1-based step numbers) for error reporting
+    std::vector<std::string> idStack;
+    std::vector<int>         stepStack;
+    std::vector<std::string> typeStack;
+
+    // Stops the workflow with a runtime error at the current step
+    auto fail = [&](const std::string& reason) {
+        std::string where = "Step ";
+        for (size_t k = 0; k < stepStack.size(); ++k)
+            where += (k ? " > " : "") + std::to_string(stepStack[k]);
+        if (!typeStack.empty()) where += " (" + typeStack.back() + ")";
+        std::string msg = where + ": " + reason;
+        {
+            std::lock_guard<std::mutex> lk(m_stateMutex);
+            m_termination.terminated = true;
+            m_termination.path       = idStack;
+            m_termination.message    = msg;
+        }
+        m_terminated = true;
+        m_stopFlag   = true;
+        Logger::Error(m_workflow.name, "TERMINATED - " + msg);
+    };
+
+    // Fills `out` with a copy of `a.data` whose variable-bound fields are
+    // substituted. On failure calls fail() and returns false.
+    auto resolveBindings = [&](const Activity& a, ActivityData& out) -> bool {
+        out = a.data;
+        std::string err;
+        ForEachBindableField(out, [&](const char* key, const char* label, auto& field) {
+            if (!err.empty()) return;
+            auto bit = a.var_bind.find(key);
+            if (bit == a.var_bind.end() || bit->second.empty()) return;
+            const std::string& var = bit->second;
+            auto vit = variables.find(var);
+            using F = std::decay_t<decltype(field)>;
+            if constexpr (std::is_same_v<F, int>) {
+                if (vit == variables.end())
+                    err = std::string("field '") + label + "' expects an integer, but variable '"
+                        + var + "' is not set";
+                else if (!ParseStrictInt(vit->second, field))
+                    err = std::string("field '") + label + "' expects an integer, but variable '"
+                        + var + "' = \"" + vit->second + "\" is not an integer";
+            } else {
+                field = (vit != variables.end()) ? vit->second : std::string();
+            }
+        });
+        if (!err.empty()) { fail(err); return false; }
+        return true;
+    };
 
     // Recursive activity runner.
     // updateIndex=true → updates m_currentIndex per item (top-level call only).
@@ -129,6 +229,22 @@ void Scheduler::Run() {
             while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (IsStopped()) break;
+
+            idStack.push_back(acts[i].id);
+            stepStack.push_back(i + 1);
+            typeStack.push_back(ActivityTypeName(acts[i].data));
+            struct PathPop {
+                std::vector<std::string>& a; std::vector<int>& b; std::vector<std::string>& c;
+                ~PathPop() { a.pop_back(); b.pop_back(); c.pop_back(); }
+            } pathPop{idStack, stepStack, typeStack};
+
+            // Substitute variable-bound fields (copy only when something is bound)
+            const ActivityData* dataPtr = &acts[i].data;
+            ActivityData resolved;
+            if (!acts[i].var_bind.empty()) {
+                if (!resolveBindings(acts[i], resolved)) break;
+                dataPtr = &resolved;
+            }
 
             std::visit([&](auto&& v) {
                 using T = std::decay_t<decltype(v)>;
@@ -161,7 +277,7 @@ void Scheduler::Run() {
                     if (!g_input) return;
                     auto [ax0, ay0] = resolveCoords(v.pos_mode, v.from_x, v.from_y);
                     auto [ax1, ay1] = resolveCoords(v.pos_mode, v.to_x,   v.to_y);
-                    g_input->MouseDrag(v.button, ax0, ay0, ax1, ay1, v.duration_ms);
+                    g_input->MouseDrag(v.button, ax0, ay0, ax1, ay1, std::max(1, v.duration_ms));
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, MouseScrollActivity>) {
@@ -226,7 +342,8 @@ void Scheduler::Run() {
                     int elapsed = 0;
                     do {
                         PixelBuffer cur = g_pixel->CaptureRegion(ax, ay, v.sample_w, v.sample_h);
-                        if (BuffersMatchPercent(sample, cur, v.tolerance) >= v.match_percent) {
+                        if (BuffersMatchPercent(sample, cur, std::clamp(v.tolerance, 0, 255))
+                                >= std::clamp(v.match_percent, 0, 100)) {
                             matched = true; break;
                         }
                         if (v.retry_timeout_ms == 0) break;
@@ -303,27 +420,32 @@ void Scheduler::Run() {
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, SetVariableActivity>) {
+                    if (v.name.empty()) { fail("variable name is empty"); return; }
                     switch (v.op) {
                         case VarOp::Set:
-                            variables[v.name] = v.value;
+                            // Empty value clears the variable (back to "not set")
+                            if (v.value.empty()) eraseVar(v.name);
+                            else                 setVar(v.name, v.value);
                             break;
-                        case VarOp::Increment: {
-                            int cur = 0;
-                            if (variables.count(v.name))
-                                try { cur = std::stoi(variables[v.name]); } catch (...) {}
-                            variables[v.name] = std::to_string(cur + v.step);
-                            break;
-                        }
+                        case VarOp::Increment:
                         case VarOp::Decrement: {
-                            int cur = 0;
-                            if (variables.count(v.name))
-                                try { cur = std::stoi(variables[v.name]); } catch (...) {}
-                            variables[v.name] = std::to_string(cur - v.step);
+                            int cur = 0;  // a variable that is not set counts as 0
+                            auto it = variables.find(v.name);
+                            if (it != variables.end() && !ParseStrictInt(it->second, cur)) {
+                                fail(std::string(v.op == VarOp::Increment ? "increment" : "decrement")
+                                     + " expects an integer, but variable '" + v.name
+                                     + "' = \"" + it->second + "\" is not an integer");
+                                return;
+                            }
+                            long long next = (long long)cur
+                                + (v.op == VarOp::Increment ? v.step : -(long long)v.step);
+                            setVar(v.name, std::to_string(next));
                             break;
                         }
                         case VarOp::Random: {
-                            std::uniform_int_distribution<int> d(v.rand_min, v.rand_max);
-                            variables[v.name] = std::to_string(d(rng));
+                            std::uniform_int_distribution<int> d(std::min(v.rand_min, v.rand_max),
+                                                                 std::max(v.rand_min, v.rand_max));
+                            setVar(v.name, std::to_string(d(rng)));
                             break;
                         }
                     }
@@ -335,7 +457,7 @@ void Scheduler::Run() {
                     int iter = 1;
                     while (!IsStopped() && (remaining == 0 || remaining-- > 0)) {
                         if (!v.iter_var.empty())
-                            variables[v.iter_var] = std::to_string(iter);
+                            setVar(v.iter_var, std::to_string(iter));
                         auto sig = runActivities(*v.body, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
                         // SkipIter → skip this loop body iteration, continue outer loop
@@ -353,11 +475,10 @@ void Scheduler::Run() {
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, SwitchActivity>) {
-                    std::string val = variables.count(v.var_name)
-                                    ? variables.at(v.var_name) : "";
+                    std::string val = ResolveValue(v.var_name, v.var_is_var, variables);
                     bool matched = false;
                     for (const auto& sc : v.cases) {
-                        if (sc.value == val && sc.body) {
+                        if (ResolveValue(sc.value, sc.value_is_var, variables) == val && sc.body) {
                             auto sig = runActivities(*sc.body, calledIds, false);
                             if (sig == FlowSignal::Stop) { skipIteration = true; return; }
                             matched = true; break;
@@ -377,9 +498,28 @@ void Scheduler::Run() {
                             break;
                         }
                     }
+
+                } else if constexpr (std::is_same_v<T, GetMousePositionActivity>) {
+                    if (!g_input) return;
+                    int sx = 0, sy = 0;
+                    g_input->GetMousePos(sx, sy);
+                    if (v.pos_mode == PositionMode::Relative) {
+                        auto [ox, oy] = m_resolver(m_workflow.window, 0, 0);
+                        sx -= ox; sy -= oy;
+                    }
+                    setVar(v.x_var, std::to_string(sx));
+                    setVar(v.y_var, std::to_string(sy));
+                    SleepInterruptible(v.delay_ms);
+
+                } else if constexpr (std::is_same_v<T, ClearVariablesActivity>) {
+                    {
+                        std::lock_guard<std::mutex> lk(m_stateMutex);
+                        m_vars.clear();
+                    }
+                    SleepInterruptible(v.delay_ms);
                 }
 
-            }, acts[i].data);
+            }, *dataPtr);
 
             if (jumpTarget >= 0) { i = jumpTarget; jumpTarget = -1; }
             if (skipIteration) break;
@@ -389,8 +529,9 @@ void Scheduler::Run() {
         return skipIteration ? FlowSignal::SkipIter : FlowSignal::Continue;
     };
 
+    Logger::Info(m_workflow.name, "Started");
+
     while (!IsStopped()) {
-        variables.clear();
         std::unordered_set<std::string> calledIds;
 
         runActivities(m_workflow.activities, calledIds, true);
@@ -407,5 +548,7 @@ void Scheduler::Run() {
         m_waitingRepeat.store(false);
     }
 
+    if (!m_terminated.load())
+        Logger::Info(m_workflow.name, IsStopped() ? "Stopped" : "Finished");
     m_running = false;
 }

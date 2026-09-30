@@ -4,6 +4,7 @@
 #include <variant>
 #include <cstdint>
 #include <memory>
+#include <map>
 
 // Forward declaration: enables shared_ptr<vector<Activity>> in nested block types
 // before Activity is fully defined. shared_ptr only needs the type complete at
@@ -177,13 +178,15 @@ struct IfActivity {
 
 struct SwitchCase {
     std::string value;
+    bool        value_is_var = false;   // value names a variable instead of a literal
     std::shared_ptr<std::vector<Activity>> body;
 };
 
 // Index 15 — switch/case
 struct SwitchActivity {
     std::string name;            // display name "Switch 1"
-    std::string var_name;        // variable to test
+    std::string var_name;        // variable to test (or literal value when !var_is_var)
+    bool        var_is_var = true;
     std::vector<SwitchCase> cases;
     std::shared_ptr<std::vector<Activity>> default_body;
     int delay_ms = 0;
@@ -192,6 +195,19 @@ struct SwitchActivity {
 // Index 16 — jump: transfer control to another activity in the same body
 struct JumpActivity {
     std::string target_id;   // id of the activity to jump to
+    int delay_ms = 0;
+};
+
+// Index 17 — store the current mouse cursor position into two variables
+struct GetMousePositionActivity {
+    PositionMode pos_mode = PositionMode::Absolute;  // Relative = offset from target window
+    std::string  x_var;
+    std::string  y_var;
+    int delay_ms = 0;
+};
+
+// Index 18 — remove every runtime variable of the workflow
+struct ClearVariablesActivity {
     int delay_ms = 0;
 };
 
@@ -214,13 +230,18 @@ using ActivityData = std::variant<
     LoopActivity,             // 13
     IfActivity,               // 14
     SwitchActivity,           // 15
-    JumpActivity              // 16
+    JumpActivity,             // 16
+    GetMousePositionActivity, // 17
+    ClearVariablesActivity    // 18
 >;
 
 struct Activity {
     std::string  id;
     bool         enabled = true;
     ActivityData data;
+    // Field key (see ForEachBindableField) -> variable name. A bound field takes
+    // its value from that runtime variable instead of the literal in `data`.
+    std::map<std::string, std::string> var_bind;
 };
 
 // ── Window targeting ──────────────────────────────────────────────────────────

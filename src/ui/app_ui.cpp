@@ -1,5 +1,7 @@
 #include "app_ui.hpp"
 #include "version.h"
+#include "core/logger.hpp"
+#include "core/variables.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include "icon_data.hpp"
@@ -578,12 +580,15 @@ void AppUI::Render() {
         }
 
         float leftW = 200.0f;
-        ImGui::BeginChild("##left", ImVec2(leftW, 0), true);
+        float logH  = m_showLog ? 160.0f : ImGui::GetFrameHeightWithSpacing() + 4.0f;
+        ImGui::BeginChild("##left", ImVec2(leftW, -logH), true);
         m_wfList.Render(
             m_config.workflows,
             [this](const std::string& id) -> WorkflowStatus {
                 if (m_engine.IsStarting(id))        return WorkflowStatus::Starting;
-                if (!m_engine.IsRunning(id))        return WorkflowStatus::Idle;
+                if (!m_engine.IsRunning(id))
+                    return m_engine.IsTerminated(id) ? WorkflowStatus::Terminated
+                                                     : WorkflowStatus::Idle;
                 if (m_engine.IsPaused(id))          return WorkflowStatus::Paused;
                 if (m_engine.IsSuspended(id))       return WorkflowStatus::Interrupted;
                 if (m_engine.IsWaitingRepeat(id))   return WorkflowStatus::WaitingRepeat;
@@ -594,7 +599,7 @@ void AppUI::Render() {
 
         ImGui::SameLine();
 
-        ImGui::BeginChild("##right", ImVec2(0, 0), true);
+        ImGui::BeginChild("##right", ImVec2(0, -logH), true);
         selIt =
             std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
                          [&](auto& w) { return w.id == m_selectedId; });
@@ -605,7 +610,11 @@ void AppUI::Render() {
         }
         ImGui::EndChild();
 
+        RenderLogPanel(logH);
+
         ImGui::End();
+
+        RenderVariablesWindow();
     }
 
     // Overlays always rendered (floating windows work outside the main window context)
@@ -948,10 +957,22 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
         }
     }
 
+    ImGui::SameLine();
+    if (ImGui::Button("Variables")) m_varsWfId = wf.id;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Show the runtime variables of this workflow and their values");
+
+    bool terminated = !running && !starting && m_engine.IsTerminated(wf.id);
+    Scheduler::Termination term;
+    if (terminated) term = m_engine.GetTermination(wf.id);
+
     ImGui::SameLine(ImGui::GetContentRegionMax().x - 200.0f);
     const char* statusText;
     ImVec4 statusColor;
-    if (starting) {
+    if (terminated) {
+        statusText  = "TERMINATED";
+        statusColor = ImVec4(1.0f, 0.3f, 0.3f, 1.f);
+    } else if (starting) {
         statusText  = "STARTING";
         statusColor = ImVec4(0.3f, 0.8f, 1.0f, 1.f);
     } else if (paused) {
@@ -973,6 +994,11 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     ImGui::PushStyleColor(ImGuiCol_Text, statusColor);
     ImGui::Text("Workflow Status: %s", statusText);
     ImGui::PopStyleColor();
+    if (terminated) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.f));
+        ImGui::TextWrapped("Error: %s", term.message.c_str());
+        ImGui::PopStyleColor();
+    }
 
     ImGui::Separator();
     RenderWindowTargetEditor(wf.window);
@@ -1044,7 +1070,102 @@ void AppUI::RenderWorkflowPanel(Workflow& wf) {
     }
 
     ImGui::Separator();
-    m_actEditor.Render(wf, m_engine.CurrentActivityIndex(wf.id));
+    m_actEditor.Render(wf, m_engine.CurrentActivityIndex(wf.id),
+                       terminated ? &term.path : nullptr);
+}
+
+// ── Variables viewer ─────────────────────────────────────────────────────────
+
+void AppUI::RenderVariablesWindow() {
+    if (m_varsWfId.empty()) return;
+    auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
+                           [&](auto& w){ return w.id == m_varsWfId; });
+    if (it == m_config.workflows.end()) { m_varsWfId.clear(); return; }
+
+    // Declared names (in order of appearance) + any runtime-only leftovers
+    std::vector<std::string> names;
+    CollectVariableNames(it->activities, names);
+    auto values = m_engine.GetVariables(it->id);
+    for (auto& [name, val] : values)
+        if (std::find(names.begin(), names.end(), name) == names.end())
+            names.push_back(name);
+
+    bool open = true;
+    std::string title = "Variables - " + it->name + "###varsWindow";
+    ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(title.c_str(), &open)) {
+        if (m_engine.IsRunning(it->id))
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.f), "Live values (workflow running)");
+        else
+            ImGui::TextDisabled("Values from the last run (cleared on next Start)");
+
+        ImGuiTableFlags tf = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                             ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
+        if (ImGui::BeginTable("##vars", 3, tf)) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("#",     ImGuiTableColumnFlags_WidthFixed, 30.f);
+            ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch, 1.f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 2.f);
+            ImGui::TableHeadersRow();
+            for (size_t i = 0; i < names.size(); ++i) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::Text("%d", (int)i + 1);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(names[i].c_str());
+                ImGui::TableNextColumn();
+                auto v = values.find(names[i]);
+                if (v != values.end()) ImGui::TextUnformatted(v->second.c_str());
+            }
+            ImGui::EndTable();
+        }
+        if (names.empty()) ImGui::TextDisabled("This workflow defines no variables.");
+    }
+    ImGui::End();
+    if (!open) m_varsWfId.clear();
+}
+
+// ── Log panel ────────────────────────────────────────────────────────────────
+
+void AppUI::RenderLogPanel(float height) {
+    uint64_t ver = Logger::Version();
+    auto entries = Logger::Snapshot();
+
+    // Pop the panel open when a new error arrives
+    bool changed = (ver != m_logSeenVersion);
+    if (changed && !entries.empty() && entries.back().level == Logger::Level::Error)
+        m_showLog = true;
+
+    ImGui::BeginChild("##logpanel", ImVec2(0, height - ImGui::GetStyle().ItemSpacing.y), true,
+                      ImGuiWindowFlags_NoScrollbar);
+    if (ImGui::SmallButton(m_showLog ? "v Log" : "> Log")) m_showLog = !m_showLog;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d)", (int)entries.size());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear##log")) Logger::Clear();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Open log file") && !Logger::FilePath().empty()) {
+        std::string url = "file:///" + Logger::FilePath();
+        for (auto& c : url) if (c == '\\') c = '/';
+        SDL_OpenURL(url.c_str());
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Logger::FilePath().c_str());
+
+    if (m_showLog) {
+        ImGui::BeginChild("##logentries", ImVec2(0, 0), false,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+        for (auto& e : entries) {
+            bool err = (e.level == Logger::Level::Error);
+            if (err) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.f));
+            if (e.source.empty())
+                ImGui::Text("%s  %s", e.time.c_str(), e.message.c_str());
+            else
+                ImGui::Text("%s  [%s] %s", e.time.c_str(), e.source.c_str(), e.message.c_str());
+            if (err) ImGui::PopStyleColor();
+        }
+        if (changed) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+    }
+    ImGui::EndChild();
+    m_logSeenVersion = ver;
 }
 
 void AppUI::RenderWindowTargetEditor(WindowTarget& wt) {
