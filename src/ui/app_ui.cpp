@@ -665,7 +665,10 @@ void AppUI::Render() {
         }
 
         float leftW = 200.0f;
-        float logH  = m_showLog ? 160.0f : ImGui::GetFrameHeightWithSpacing() + 4.0f;
+        // Collapsed: just the toolbar row (frame height + child padding + spacing)
+        const ImGuiStyle& st = ImGui::GetStyle();
+        float logH  = m_showLog ? 160.0f
+                    : ImGui::GetFrameHeight() + st.WindowPadding.y * 2.0f + st.ItemSpacing.y + 2.0f;
         ImGui::BeginChild("##left", ImVec2(leftW, -logH), true);
         m_wfList.Render(
             m_config.workflows,
@@ -1246,12 +1249,10 @@ void AppUI::RenderLogPanel(float height) {
 
     ImGui::BeginChild("##logpanel", ImVec2(0, height - ImGui::GetStyle().ItemSpacing.y), true,
                       ImGuiWindowFlags_NoScrollbar);
-    // Toolbar: zero vertical frame padding so buttons, combo and input share
-    // the same (compact) height and fit the collapsed panel
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                        ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+    // Toolbar uses full-size Buttons so they match the Combo / InputInt height
     if (ImGui::Button(m_showLog ? "v Log" : "> Log")) m_showLog = !m_showLog;
     ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("(%d)", (int)entries.size());
     ImGui::SameLine();
     if (ImGui::Button("Clear##log")) {
@@ -1318,7 +1319,6 @@ void AppUI::RenderLogPanel(float height) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Delete log files older than %d days from\n%s",
                           m_config.log_retention_days, Logger::Dir().c_str());
-    ImGui::PopStyleVar();
 
     if (m_showLog) {
         ImGui::BeginChild("##logentries", ImVec2(0, 0), false,
