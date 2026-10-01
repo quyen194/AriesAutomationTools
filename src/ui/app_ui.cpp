@@ -240,6 +240,7 @@ void AppUI::Init(const std::string& config_path, SDL_Window* sdlWindow) {
         }
 
     m_tray.Init(kIconPixels, 32, 32);
+    m_tray.SetMenuOpenCallback([this](bool open) { m_engine.SetInputHold(open); });
     UpdateTrayWorkflows();
 
     // Build a GL texture for the About dialog icon display (RGBA bytes)
@@ -301,6 +302,10 @@ void AppUI::MinimizeToTray() {
 void AppUI::RestoreFromTray() {
     if (m_sdlWindow) {
         SDL_ShowWindow(m_sdlWindow);
+        // Minimize-to-tray hides an already minimized window; showing it alone
+        // brings it back still minimized, so restore it explicitly.
+        if (SDL_GetWindowFlags(m_sdlWindow) & SDL_WINDOW_MINIMIZED)
+            SDL_RestoreWindow(m_sdlWindow);
         SDL_RaiseWindow(m_sdlWindow);
     }
     m_windowVisible = true;
@@ -383,8 +388,12 @@ void AppUI::PollTrayActions() {
     for (auto& a : actions) {
         switch (a.action) {
             case TrayAction::ShowWindow:
-                if (m_windowVisible) MinimizeToTray();
-                else                  RestoreFromTray();
+                // A visible-but-minimized window (minimize-to-tray off) is
+                // restored rather than hidden.
+                if (m_windowVisible && !(SDL_GetWindowFlags(m_sdlWindow) & SDL_WINDOW_MINIMIZED))
+                    MinimizeToTray();
+                else
+                    RestoreFromTray();
                 break;
             case TrayAction::Exit:
                 Logger::Info("User", "Tray: Exit");

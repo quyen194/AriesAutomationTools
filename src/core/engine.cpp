@@ -6,6 +6,9 @@
 // Forward declarations from scheduler.cpp
 void Scheduler_SetInputSimulator(IInputSimulator* s);
 void Scheduler_SetPixelChecker(IPixelChecker* p);
+void Scheduler_SetGlobalHold(bool h);
+
+void WorkflowEngine::SetInputHold(bool hold) { Scheduler_SetGlobalHold(hold); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 

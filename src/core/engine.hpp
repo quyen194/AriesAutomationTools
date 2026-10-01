@@ -47,6 +47,10 @@ public:
     void UpdateRepeatInterval(const std::string& id, int ms);
     bool IsGloballyPaused() const { return m_globalPaused.load(); }
 
+    // Temporarily hold all running workflows before their next activity
+    // (no state change visible in the UI). Used while the tray menu is open.
+    void SetInputHold(bool hold);
+
     // Global action hotkeys (OS-level, work even when minimized)
     void SetStartAllHotkey(const std::string& key_name);
     void SetStopAllHotkey(const std::string& key_name);

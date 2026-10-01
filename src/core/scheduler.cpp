@@ -21,6 +21,11 @@ static IPixelChecker*   g_pixel   = nullptr;
 void Scheduler_SetInputSimulator(IInputSimulator* s)  { g_input = s; }
 void Scheduler_SetPixelChecker(IPixelChecker* p)      { g_pixel = p; }
 
+// Engine-wide hold: every scheduler waits before its next activity/delay slice
+// (set while the tray context menu is open so injected input can't dismiss it)
+static std::atomic<bool> g_hold{false};
+void Scheduler_SetGlobalHold(bool h) { g_hold.store(h); }
+
 // ── Flow control signals for the recursive activity runner ────────────────────
 
 enum class FlowSignal { Continue, SkipIter, Stop };
@@ -127,7 +132,7 @@ void Scheduler::SleepInterruptible(int ms) {
     while (ms > 0 && !IsStopped()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(std::min(ms, kSlice)));
         ms -= kSlice;
-        while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
+        while ((m_suspended.load() || m_userPaused.load() || g_hold.load()) && !IsStopped())
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
@@ -241,10 +246,12 @@ void Scheduler::Run() {
             if (updateIndex) m_currentIndex.store(i);
 
             // Spin while suspended or user-paused
-            if ((m_suspended.load() || m_userPaused.load()) && !IsStopped()) {
+            if ((m_suspended.load() || m_userPaused.load() || g_hold.load()) && !IsStopped()) {
                 Logger::Debug(wfName, std::string("Waiting before activity #") + std::to_string(i + 1)
-                              + (m_userPaused.load() ? " (paused by user)" : " (suspended by smart detection)"));
-                while ((m_suspended.load() || m_userPaused.load()) && !IsStopped())
+                              + (m_userPaused.load() ? " (paused by user)"
+                                 : m_suspended.load() ? " (suspended by smart detection)"
+                                                      : " (held: tray menu open)"));
+                while ((m_suspended.load() || m_userPaused.load() || g_hold.load()) && !IsStopped())
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 if (!IsStopped()) Logger::Debug(wfName, "Continue after pause/suspend");
             }

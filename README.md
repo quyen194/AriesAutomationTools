@@ -226,7 +226,7 @@ This prevents the tool from fighting with your own mouse/keyboard during active 
 
 ### 9. System Tray
 
-When minimized to tray, AriesAutomationTools remains running in the background. Right-click the tray icon for a context menu with Show/Hide, Start/Stop/Pause/Resume All, and individual workflow controls. Left-click restores the window.
+When minimized to tray, AriesAutomationTools remains running in the background. Right-click the tray icon for a context menu with Show/Hide, Start/Stop/Pause/Resume All, and individual workflow controls (running workflows wait before their next step while this menu is open, so their input can't close it). Left-click toggles the window, restoring it if minimized and bringing it to the front.
 
 Enable **Close to tray** via **File > Close to Tray** or the config to make the X button minimize rather than exit. Workflows keep running while the window is hidden.
 

@@ -78,6 +78,9 @@ struct TrayManager::Impl {
     HICON  hIcon = nullptr;
     bool   added = false;
     DWORD  lastToggleTick = 0;  // debounces left-click show/hide toggles
+    bool   versionV4 = false;   // NIM_SETVERSION(NOTIFYICON_VERSION_4) succeeded
+    bool   inMenu    = false;   // TrackPopupMenuEx modal loop is active
+    std::function<void(bool)> onMenuOpen;
 
     std::vector<TrayWorkflowDesc> workflows;
     std::vector<TrayPendingAction> pending;
@@ -101,6 +104,15 @@ struct TrayManager::Impl {
     }
 
     void ShowContextMenu() {
+        // The menu's modal loop dispatches queued messages, so a second tray
+        // event could re-enter here; a nested call would hide the owner window
+        // and dismiss the menu that is already open.
+        if (inMenu) return;
+        inMenu = true;
+        // Hold running workflows while the menu is open: their injected clicks
+        // and keystrokes would otherwise dismiss it right after it appears.
+        if (onMenuOpen) onMenuOpen(true);
+
         POINT pt;
         GetCursorPos(&pt);
 
@@ -167,6 +179,9 @@ struct TrayManager::Impl {
         // Re-hide the helper window now that the menu is dismissed.
         ShowWindow(hwnd, SW_HIDE);
 
+        if (onMenuOpen) onMenuOpen(false);
+        inMenu = false;
+
         if (cmd == 0) return;
 
         if (cmd == IDM_EXIT) {
@@ -225,7 +240,10 @@ struct TrayManager::Impl {
                 if (now - self->lastToggleTick < GetDoubleClickTime()) return 0;
                 self->lastToggleTick = now;
                 self->pending.push_back({TrayAction::ShowWindow, ""});
-            } else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU || ev == NIN_KEYSELECT) {
+            } else if (ev == WM_CONTEXTMENU || ev == NIN_KEYSELECT ||
+                       // VERSION_4 sends WM_RBUTTONUP *and* WM_CONTEXTMENU for one
+                       // right click; only legacy mode relies on WM_RBUTTONUP.
+                       (ev == WM_RBUTTONUP && !self->versionV4)) {
                 self->ShowContextMenu();
             }
             return 0;
@@ -284,7 +302,7 @@ void TrayManager::Init(const uint8_t* iconPixels, int iconW, int iconH) {
     nidv4.hWnd    = m_impl->hwnd;
     nidv4.uID     = 1;
     nidv4.uVersion= NOTIFYICON_VERSION_4;
-    Shell_NotifyIconA(NIM_SETVERSION, &nidv4);
+    m_impl->versionV4 = Shell_NotifyIconA(NIM_SETVERSION, &nidv4) != FALSE;
 
     m_impl->added = true;
 }
@@ -323,6 +341,10 @@ void TrayManager::UpdateIcon(const uint8_t* pixels, int w, int h) {
 
 void TrayManager::SetGlobalHotkeyLabel(const std::string& label) {
     if (m_impl) m_impl->globalHotkeyLabel = label;
+}
+
+void TrayManager::SetMenuOpenCallback(std::function<void(bool)> cb) {
+    if (m_impl) m_impl->onMenuOpen = std::move(cb);
 }
 
 void TrayManager::Poll(std::vector<TrayPendingAction>& out) {

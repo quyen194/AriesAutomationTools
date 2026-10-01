@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,10 @@ public:
     // Display the global hotkey string next to "Start All" in the context menu.
     // Pass an empty string to remove the label.
     void SetGlobalHotkeyLabel(const std::string& label);
+
+    // Called with true just before the context menu opens and false after it
+    // closes (on the UI thread, while the menu's modal loop blocks the frame).
+    void SetMenuOpenCallback(std::function<void(bool open)> cb);
 
 private:
     struct Impl;

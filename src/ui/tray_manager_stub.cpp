@@ -11,3 +11,4 @@ void TrayManager::UpdateWorkflows(const std::vector<TrayWorkflowDesc>&) {}
 void TrayManager::Poll(std::vector<TrayPendingAction>&) {}
 void TrayManager::UpdateIcon(const uint8_t*, int, int) {}
 void TrayManager::SetGlobalHotkeyLabel(const std::string&) {}
+void TrayManager::SetMenuOpenCallback(std::function<void(bool)>) {}
