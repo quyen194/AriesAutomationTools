@@ -5,21 +5,45 @@
 #endif
 #include "window_picker.hpp"
 #include "imgui.h"
+#include <algorithm>
+#include <string>
 
 void WindowPickerWidget::Render(IWindowFinder* finder, const WindowTarget& current) {
-    // Show current target summary
-    const char* typeStr = "Global";
+    // Show current target detail, truncated with "..." so the button stays visible
     std::string detail;
     switch (current.type) {
-        case WindowTarget::Type::ByTitle:  typeStr = "By Title";  detail = current.title;      break;
-        case WindowTarget::Type::ByClass:  typeStr = "By Class";  detail = current.class_name; break;
-        case WindowTarget::Type::ByHandle: typeStr = "By Handle"; detail = std::to_string(current.handle); break;
+        case WindowTarget::Type::ByTitle:  detail = current.title;      break;
+        case WindowTarget::Type::ByClass:  detail = current.class_name; break;
+        case WindowTarget::Type::ByHandle: detail = std::to_string(current.handle); break;
         default: break;
     }
-    if (detail.empty())
-        ImGui::TextDisabled("Window: %s", typeStr);
-    else
-        ImGui::TextDisabled("Window: %s - %s", typeStr, detail.c_str());
+    if (detail.empty()) detail = "Global";
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float btnW = std::max(ImGui::CalcTextSize("[Pick Window]").x,
+                          ImGui::CalcTextSize("Cancel Pick").x) + style.FramePadding.x * 2.f;
+    float maxTextW = ImGui::GetContentRegionAvail().x - btnW - style.ItemSpacing.x;
+
+    std::string shown = detail;
+    bool truncated = false;
+    if (ImGui::CalcTextSize(detail.c_str()).x > maxTextW) {
+        truncated = true;
+        float budget = maxTextW - ImGui::CalcTextSize("...").x;
+        size_t cut = 0;
+        for (size_t i = 0; i < detail.size();) {
+            // Advance one UTF-8 code point so multi-byte titles are never split
+            unsigned char c = (unsigned char)detail[i];
+            size_t len = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+            size_t next = std::min(i + len, detail.size());
+            if (ImGui::CalcTextSize(detail.c_str(), detail.c_str() + next).x > budget) break;
+            cut = i = next;
+        }
+        shown = detail.substr(0, cut) + "...";
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", shown.c_str());
+    if (truncated && ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", detail.c_str());
 
     ImGui::SameLine();
 
