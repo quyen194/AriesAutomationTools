@@ -147,7 +147,7 @@ Modifiers field (space-separated): `ctrl shift alt`
 By default, activities run on the global screen. To scope actions to a specific window:
 
 1. Open the **Window** dropdown in the workflow panel and choose **By Title** or **By Class**.
-2. Click **Pick Window** — the cursor becomes a crosshair. Hover over the target window; a tooltip shows its title, class, and handle. Left-click to confirm.
+2. Click **Pick Window** — the tool minimizes itself and the cursor becomes a crosshair. Hover over the target window; a floating panel shows its title, class, and handle. Left-click to confirm (Esc cancels); the tool then restores and comes back to front.
 3. Mouse coordinates set to `relative` will now be measured from the top-left of that window's client area.
 
 ### 5. Recording

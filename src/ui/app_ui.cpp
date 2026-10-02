@@ -158,6 +158,23 @@ AppUI::AppUI() {
         m_dirty = true;
     };
 
+    // Get the tool out of the way while picking, then bring it back to front
+    m_winPicker.OnPickBegin = [this]() {
+        if (m_sdlWindow) SDL_MinimizeWindow(m_sdlWindow);
+    };
+    m_winPicker.OnPickEnd = [this]() {
+        if (!m_sdlWindow) return;
+        SDL_ShowWindow(m_sdlWindow);
+        if (SDL_GetWindowFlags(m_sdlWindow) & SDL_WINDOW_MINIMIZED)
+            SDL_RestoreWindow(m_sdlWindow);
+        // The picked window owns the foreground now; Windows refuses a plain
+        // SetForegroundWindow from a background process, so force the raise.
+        SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
+        SDL_RaiseWindow(m_sdlWindow);
+        SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "0");
+        m_windowVisible = true;
+    };
+
     m_recOverlay.OnFinished = [this](std::vector<Activity> acts) {
         auto it = std::find_if(m_config.workflows.begin(), m_config.workflows.end(),
                                [&](auto& w){ return w.id == m_selectedId; });
@@ -289,7 +306,8 @@ bool AppUI::RequestQuit() {
 }
 
 void AppUI::OnWindowMinimized() {
-    if (m_config.minimize_to_tray) {
+    // Window picker minimizes the app itself; don't send it to the tray
+    if (m_config.minimize_to_tray && !m_winPicker.IsPicking()) {
         Logger::Debug("User", "Minimized to tray");
         MinimizeToTray();
     }
@@ -601,6 +619,9 @@ void AppUI::Render() {
     // Only dispatch OS hotkey callbacks when no hotkey capture is in progress
     if (!anyCapture) m_engine.PollHotkeys();
     PollTrayActions();
+
+    // Window picker runs while the app is minimized — must update every frame
+    m_winPicker.Update(m_engine.WindowFinder());
 
     // Per-workflow software hotkeys — only when window is focused and not capturing
     {
