@@ -251,6 +251,7 @@ void AppUI::Shutdown() {
     // GL textures must be freed while the GL context is alive
     GlTexture::Destroy(m_iconTexture);
     GlTexture::Destroy(m_trigSampleTex);
+    GlTexture::Destroy(m_trigSnipTex);
     m_actEditor.ReleaseTextures();
     m_tray.Shutdown();
     m_triggers.Stop();
@@ -542,8 +543,10 @@ void AppUI::Render() {
 
     // ── Trigger snip state machine ────────────────────────────────────────────
     if (m_trigSnipStage == TrigSnipStage::WaitMinimize) {
-        m_trigSnipStage = TrigSnipStage::WaitFrame;
-        return; // extra frame so window is fully hidden
+        // Wait until the compositor's fade-out is over so the app isn't in the shot
+        if (SDL_GetTicks() - m_trigSnipHideTick >= kSnipHideDelayMs)
+            m_trigSnipStage = TrigSnipStage::WaitFrame;
+        return;
     }
     if (m_trigSnipStage == TrigSnipStage::WaitFrame) {
         // Capture screenshot pixels — kept for pixel extraction on mouse release.
@@ -551,17 +554,16 @@ void AppUI::Render() {
         IPixelChecker* checker = m_engine.PixelChecker();
         if (checker)
             m_trigSnipPixels = checker->CaptureFullScreen(m_trigSnipW, m_trigSnipH);
+        // Screenshot as overlay background: window transparency is black on some drivers
+        GlTexture::Destroy(m_trigSnipTex);
+        if (!m_trigSnipPixels.empty())
+            m_trigSnipTex = GlTexture::CreateFromRGB(m_trigSnipPixels.data(), m_trigSnipW, m_trigSnipH);
         if (m_sdlWindow && m_trigSnipOrigW > 0) {
-            SDL_DisplayMode dm{};
-            if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
-                SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
-                SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
-                SDL_SetWindowPosition(m_sdlWindow, 0, 0);
-                SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
+            if (CoverDisplayWithWindow(m_sdlWindow)) {
                 SDL_ShowWindow(m_sdlWindow);
                 SDL_RaiseWindow(m_sdlWindow);
             }
-            SDL_SetWindowOpacity(m_sdlWindow, m_config.pick_overlay_opacity);
+            SDL_SetWindowOpacity(m_sdlWindow, m_trigSnipTex ? 1.0f : m_config.pick_overlay_opacity);
             m_trigOrigCursor = SDL_GetCursor();
             if (!m_trigCrosshairCursor)
                 m_trigCrosshairCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
@@ -574,6 +576,7 @@ void AppUI::Render() {
     }
     if (m_trigSnipStage == TrigSnipStage::Done) {
         m_trigSnipPixels.clear();
+        GlTexture::Destroy(m_trigSnipTex);
         m_trigSnipStage = TrigSnipStage::None;
         // Restore window
         if (m_sdlWindow && m_trigSnipOrigW > 0) {
@@ -757,6 +760,9 @@ void AppUI::RenderTriggerSnipOverlay() {
         int y1 = std::min(m_trigSnipY1, m_trigSnipY2);
         int x2 = std::max(m_trigSnipX1, m_trigSnipX2);
         int y2 = std::max(m_trigSnipY1, m_trigSnipY2);
+
+        DrawSnipBackground(dl, m_trigSnipTex, m_trigSnipW, m_trigSnipH, m_trigSnipDragging,
+                           x1, y1, x2, y2);
 
         if (m_trigSnipDragging) {
             auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
@@ -1594,8 +1600,9 @@ void AppUI::RenderTriggerEditor(StartTrigger& trig, const std::string& wfId) {
                 SDL_GetWindowSize(m_sdlWindow, &m_trigSnipOrigW, &m_trigSnipOrigH);
                 SDL_HideWindow(m_sdlWindow);
             }
-            m_trigPickTarget  = &trig;
-            m_trigSnipStage   = TrigSnipStage::WaitMinimize;
+            m_trigPickTarget   = &trig;
+            m_trigSnipHideTick = SDL_GetTicks();
+            m_trigSnipStage    = TrigSnipStage::WaitMinimize;
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Hide the app and drag to capture a screen region");

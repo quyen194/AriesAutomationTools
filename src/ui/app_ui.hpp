@@ -132,8 +132,10 @@ private:
     // ── Pixel trigger region snip (Capture region) ───────────────────────────
     enum class TrigSnipStage { None, WaitMinimize, WaitFrame, Active, Done };
     TrigSnipStage         m_trigSnipStage    = TrigSnipStage::None;
+    uint32_t              m_trigSnipHideTick = 0;   // SDL_GetTicks() when the window was hidden
     std::vector<uint32_t> m_trigSnipPixels;
     int                   m_trigSnipW        = 0, m_trigSnipH        = 0;
+    unsigned int          m_trigSnipTex      = 0;   // GL texture of m_trigSnipPixels
     int                   m_trigSnipX1       = 0, m_trigSnipY1       = 0;
     int                   m_trigSnipX2       = 0, m_trigSnipY2       = 0;
     bool                  m_trigSnipDragging = false;

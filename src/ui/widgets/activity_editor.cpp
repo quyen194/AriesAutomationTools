@@ -27,6 +27,7 @@ ActivityEditorWidget::~ActivityEditorWidget() {
 
 void ActivityEditorWidget::ReleaseTextures() {
     GlTexture::Destroy(m_samplePreviewTex);
+    GlTexture::Destroy(m_snipTex);
     m_samplePreviewHash = 0;
 }
 
@@ -309,13 +310,7 @@ void ActivityEditorWidget::EnterFullscreenMode() {
     if (!m_sdlWindow || m_origWindowW > 0) return; // already fullscreen or no window
     SDL_GetWindowPosition(m_sdlWindow, &m_origWindowX, &m_origWindowY);
     SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
-    SDL_DisplayMode dm{};
-    if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
-        SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
-        SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
-        SDL_SetWindowPosition(m_sdlWindow, 0, 0);
-        SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
-    }
+    CoverDisplayWithWindow(m_sdlWindow);
     if (m_pOverlayOpacity)
         SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
     m_origCursor = SDL_GetCursor();
@@ -419,6 +414,18 @@ void ActivityEditorWidget::CollectFlatNodes(std::vector<Activity>& list,
                 } else if constexpr (std::is_same_v<T,PixelRangeCheckActivity>) {
                     if (v.match_body && !v.match_body->empty())
                         CollectFlatNodes(*v.match_body, depth + 1, childCont);
+                    // "else (no match)" separator — always shown so user can add to no_match_body
+                    {
+                        FlatNode sep;
+                        sep.depth = depth;
+                        sep.kind  = FlatNode::Kind::SectionSeparator;
+                        sep.ancestorContinues = ancestorCont;
+                        sep.blockId   = a.id;
+                        sep.blockName = BlockName(a);
+                        sep.sectionLabel = "else (no match)";
+                        sep.sectionBody  = v.no_match_body ? v.no_match_body.get() : nullptr;
+                        m_flatNodes.push_back(sep);
+                    }
                     if (v.no_match_body && !v.no_match_body->empty())
                         CollectFlatNodes(*v.no_match_body, depth + 1, childCont);
                 }
@@ -449,8 +456,9 @@ void ActivityEditorWidget::RebuildFlatNodes(Workflow& wf) {
 
 void ActivityEditorWidget::RunSnipStateMachine(Workflow& wf) {
     if (m_snipStage == SnipStage::WaitMinimize) {
-        // Window was hidden last frame; wait one more frame for OS compositor
-        m_snipStage = SnipStage::WaitFrame;
+        // Window was hidden; wait until the compositor's fade-out animation is over
+        if (SDL_GetTicks() - m_snipHideTick >= kSnipHideDelayMs)
+            m_snipStage = SnipStage::WaitFrame;
         return;
     }
 
@@ -461,19 +469,21 @@ void ActivityEditorWidget::RunSnipStateMachine(Workflow& wf) {
         IPixelChecker* checker = EditorPixelChecker();
         if (checker)
             m_snipPixels = checker->CaptureFullScreen(m_snipW, m_snipH);
+        // Show the screenshot as the overlay background so the overlay does not depend
+        // on window transparency (renders solid black on some GPU drivers)
+        GlTexture::Destroy(m_snipTex);
+        if (!m_snipPixels.empty())
+            m_snipTex = GlTexture::CreateFromRGB(m_snipPixels.data(), m_snipW, m_snipH);
 
-        // Re-show window as borderless full-screen transparent overlay
+        // Re-show window as borderless full-screen overlay
         if (m_sdlWindow && m_origWindowW > 0) {
-            SDL_DisplayMode dm{};
-            if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
-                SDL_SetWindowBordered(m_sdlWindow, SDL_FALSE);
-                SDL_SetWindowAlwaysOnTop(m_sdlWindow, SDL_TRUE);
-                SDL_SetWindowPosition(m_sdlWindow, 0, 0);
-                SDL_SetWindowSize(m_sdlWindow, dm.w, dm.h);
+            if (CoverDisplayWithWindow(m_sdlWindow)) {
                 SDL_ShowWindow(m_sdlWindow);
                 SDL_RaiseWindow(m_sdlWindow);
             }
-            if (m_pOverlayOpacity)
+            if (m_snipTex)
+                SDL_SetWindowOpacity(m_sdlWindow, 1.0f);
+            else if (m_pOverlayOpacity)
                 SDL_SetWindowOpacity(m_sdlWindow, *m_pOverlayOpacity);
             m_origCursor = SDL_GetCursor();
             if (!m_crosshairCursor)
@@ -492,6 +502,7 @@ void ActivityEditorWidget::RunSnipStateMachine(Workflow& wf) {
 
     if (m_snipStage == SnipStage::Done) {
         m_snipPixels.clear();
+        GlTexture::Destroy(m_snipTex);
         m_snipStage = SnipStage::None;
         ExitFullscreenMode();
         m_openModal = true;
@@ -1146,6 +1157,8 @@ void ActivityEditorWidget::RenderSnipOverlay(Workflow& wf) {
         int x2 = std::max(m_snipX1, m_snipX2);
         int y2 = std::max(m_snipY1, m_snipY2);
 
+        DrawSnipBackground(dl, m_snipTex, m_snipW, m_snipH, m_snipDragging, x1, y1, x2, y2);
+
         if (m_snipDragging) {
             // Dashed selection border
             auto drawDashed = [&](ImVec2 p1, ImVec2 p2) {
@@ -1420,7 +1433,8 @@ void ActivityEditorWidget::StartSnip() {
         SDL_GetWindowSize(m_sdlWindow, &m_origWindowW, &m_origWindowH);
         SDL_HideWindow(m_sdlWindow);
     }
-    m_snipStage = SnipStage::WaitMinimize;
+    m_snipHideTick = SDL_GetTicks();
+    m_snipStage    = SnipStage::WaitMinimize;
     ImGui::CloseCurrentPopup();
 }
 

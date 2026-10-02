@@ -794,7 +794,8 @@ void ConfigManager::Save(const AppConfig& config, const std::string& path) {
     json root = ToJson(config);
     std::ofstream f(path);
     if (!f.is_open()) throw std::runtime_error("Cannot write config: " + path);
-    f << root.dump(2);
+    // replace: a stray non-UTF-8 string (e.g. old ANSI window titles) must not abort the save
+    f << root.dump(2, ' ', false, json::error_handler_t::replace);
 }
 
 // Legacy location (pre-AppData): config.json next to the executable.

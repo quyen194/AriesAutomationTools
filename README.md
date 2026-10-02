@@ -98,7 +98,7 @@ Click **`+ Add`** in the Activities section to open the activity editor modal. T
 | `type_string`  | Type a string of text character by character |
 | `wait`         | Pause execution for a duration (with optional random range) |
 | `pixel_check`  | Wait until a screen pixel matches a color, or skip/stop on timeout |
-| `pixel_range_check` | Like `pixel_check`, but over a rectangular region: pick a start and end corner, capture the rect as a reference image (stored base64 in config), then at run time compare the live screen against it (per-channel tolerance + % of pixels that must match) |
+| `pixel_range_check` | Like `pixel_check`, but over a rectangular region: pick a start and end corner, capture the rect as a reference image (stored base64 in config), then at run time compare the live screen against it (per-channel tolerance + % of pixels that must match). Child activities run on match; the **else (no match)** branch runs when the check fails |
 | `run_workflow`   | Trigger another workflow by ID |
 | `system_action`  | Perform a system-level OS action: Shutdown, Restart, Sleep, Hibernate, Lock, or Log out. Optional **Force** flag skips save dialogs (Shutdown / Restart / Hibernate / Log out only). OS-specific: Windows uses `shutdown` / `rundll32`; Linux uses `systemctl` / `loginctl`; macOS uses `pmset` / `osascript`. |
 | `get_mouse_position` | Store the current cursor X / Y into two variables (absolute, or relative to the target window) |

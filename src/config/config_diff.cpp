@@ -5,7 +5,8 @@ using json = nlohmann::ordered_json;
 
 static std::string Short(const json& v) {
     constexpr size_t kMax = 80;   // pixel samples are long base64 strings
-    std::string s = v.is_null() ? "(none)" : v.dump();
+    std::string s = v.is_null() ? "(none)"
+                  : v.dump(-1, ' ', false, json::error_handler_t::replace);
     if (s.size() > kMax) s = s.substr(0, kMax) + "...(" + std::to_string(s.size()) + " chars)";
     return s;
 }

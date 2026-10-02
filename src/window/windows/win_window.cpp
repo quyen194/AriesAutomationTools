@@ -8,6 +8,43 @@
 
 // ── Window Finder ─────────────────────────────────────────────────────────────
 
+// Window titles/classes are read via the wide APIs and converted to UTF-8.
+// The *A variants return the ANSI codepage (CP932 on Japanese Windows), which is
+// not valid UTF-8: ImGui shows garbage and nlohmann::json throws on dump().
+static std::string Utf8FromWide(const wchar_t* w) {
+    if (!w || !*w) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return {};
+    std::string s((size_t)n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+    s.resize((size_t)n - 1);   // drop the terminating NUL
+    return s;
+}
+
+static std::string WindowTitleUtf8(HWND hwnd) {
+    wchar_t buf[512]{};
+    GetWindowTextW(hwnd, buf, (int)(sizeof(buf) / sizeof(buf[0])));
+    return Utf8FromWide(buf);
+}
+
+static std::string WindowClassUtf8(HWND hwnd) {
+    wchar_t buf[512]{};
+    GetClassNameW(hwnd, buf, (int)(sizeof(buf) / sizeof(buf[0])));
+    return Utf8FromWide(buf);
+}
+
+static WindowInfo InfoFromHwnd(HWND hwnd) {
+    WindowInfo info;
+    if (!hwnd) return info;
+    info.handle     = (uint64_t)(uintptr_t)hwnd;
+    info.title      = WindowTitleUtf8(hwnd);
+    info.class_name = WindowClassUtf8(hwnd);
+    RECT r{};
+    GetWindowRect(hwnd, &r);
+    info.rect = {r.left, r.top, r.right - r.left, r.bottom - r.top};
+    return info;
+}
+
 struct EnumData {
     std::string target;
     bool        byClass = false;
@@ -18,39 +55,12 @@ struct EnumData {
 static BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
     if (!IsWindowVisible(hwnd)) return TRUE;
     auto* d = reinterpret_cast<EnumData*>(lParam);
-
-    char buf[512]{};
-    if (d->byClass)
-        GetClassNameA(hwnd, buf, sizeof(buf));
-    else
-        GetWindowTextA(hwnd, buf, sizeof(buf));
-
-    if (d->target == buf) {
-        RECT r{};
-        GetWindowRect(hwnd, &r);
-        d->result.handle     = (uint64_t)(uintptr_t)hwnd;
-        d->result.class_name = [&]{ char c[512]{}; GetClassNameA(hwnd,c,sizeof(c)); return std::string(c); }();
-        d->result.title      = [&]{ char t[512]{}; GetWindowTextA(hwnd,t,sizeof(t)); return std::string(t); }();
-        d->result.rect       = {r.left, r.top, r.right - r.left, r.bottom - r.top};
-        d->found = true;
+    if (d->target == (d->byClass ? WindowClassUtf8(hwnd) : WindowTitleUtf8(hwnd))) {
+        d->result = InfoFromHwnd(hwnd);
+        d->found  = true;
         return FALSE; // stop enumeration
     }
     return TRUE;
-}
-
-static WindowInfo InfoFromHwnd(HWND hwnd) {
-    WindowInfo info;
-    if (!hwnd) return info;
-    info.handle = (uint64_t)(uintptr_t)hwnd;
-    char buf[512]{};
-    GetWindowTextA(hwnd, buf, sizeof(buf));
-    info.title = buf;
-    GetClassNameA(hwnd, buf, sizeof(buf));
-    info.class_name = buf;
-    RECT r{};
-    GetWindowRect(hwnd, &r);
-    info.rect = {r.left, r.top, r.right - r.left, r.bottom - r.top};
-    return info;
 }
 
 class WinWindowFinder : public IWindowFinder {

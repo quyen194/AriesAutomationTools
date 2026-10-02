@@ -119,8 +119,10 @@ private:
     // ── Snipping-tool capture state ───────────────────────────────────────────
     enum class SnipStage { None, WaitMinimize, WaitFrame, Active, Done };
     SnipStage    m_snipStage   = SnipStage::None;
+    uint32_t     m_snipHideTick = 0;          // SDL_GetTicks() when the window was hidden
     std::vector<uint32_t> m_snipPixels;
     int          m_snipW      = 0, m_snipH      = 0;
+    unsigned int m_snipTex    = 0;            // GL texture of m_snipPixels (overlay background)
     int          m_snipX1     = 0, m_snipY1     = 0;
     int          m_snipX2     = 0, m_snipY2     = 0;
     bool         m_snipDragging = false;
