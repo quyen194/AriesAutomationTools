@@ -75,6 +75,19 @@ static const char* ActivityTypeName(const ActivityData& d) {
     return kNames[d.index()];
 }
 
+// Control-flow / variable activities: they don't touch the screen, so they
+// leave $_interrupted as the last action activity set it.
+static bool IsControlFlow(const ActivityData& d) {
+    return std::holds_alternative<RunActivityActivity>(d)
+        || std::holds_alternative<SetVariableActivity>(d)
+        || std::holds_alternative<LoopActivity>(d)
+        || std::holds_alternative<IfActivity>(d)
+        || std::holds_alternative<SwitchActivity>(d)
+        || std::holds_alternative<JumpActivity>(d)
+        || std::holds_alternative<GetMousePositionActivity>(d)
+        || std::holds_alternative<ClearVariablesActivity>(d);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 Scheduler::Scheduler(const Workflow& wf, CoordResolver resolver)
@@ -168,6 +181,21 @@ void Scheduler::Run() {
         m_vars.erase(name);
     };
     auto xy = [](int x, int y) { return "(" + std::to_string(x) + "," + std::to_string(y) + ")"; };
+
+    // $_interrupted: "1" if smart detection suspended the workflow since the
+    // previous checkpoint, else "0". Action activities write it when they finish;
+    // control-flow activities leave it alone (so an If can test it) except to
+    // report an interruption that happened in the gap before them.
+    uint64_t interruptMark = m_interruptEpoch.load();
+    auto checkpointInterrupt = [&](bool reportClean) {
+        uint64_t now = m_interruptEpoch.load();
+        bool hit = now != interruptMark;
+        interruptMark = now;
+        if (!hit && !reportClean) return;
+        if (hit) Logger::Debug(wfName, "  var $" + std::string(kInterruptedVar) + " = \"1\" (user interrupted)");
+        std::lock_guard<std::mutex> lk(m_stateMutex);
+        m_vars[kInterruptedVar] = hit ? "1" : "0";
+    };
 
     // Execution path (activity ids / 1-based step numbers) for error reporting
     std::vector<std::string> idStack;
@@ -284,6 +312,11 @@ void Scheduler::Run() {
                 if (!bound.empty()) Logger::Debug(wfName, "  bindings: " + bound);
             }
 
+            // An interruption in the gap before a control-flow step is still
+            // reported (attributed to the previous action) so an If sees it
+            const bool isControl = IsControlFlow(acts[i].data);
+            if (isControl) checkpointInterrupt(false);
+
             std::visit([&](auto&& v) {
                 using T = std::decay_t<decltype(v)>;
 
@@ -383,9 +416,10 @@ void Scheduler::Run() {
                     }
 
                 } else if constexpr (std::is_same_v<T, PixelRangeCheckActivity>) {
-                    if (!g_pixel) { SleepInterruptible(v.delay_ms); return; }
-                    if (v.sample.empty() || v.sample_w <= 0 || v.sample_h <= 0) {
-                        SleepInterruptible(v.delay_ms); return;
+                    if (!g_pixel || v.sample.empty() || v.sample_w <= 0 || v.sample_h <= 0) {
+                        SleepInterruptible(v.delay_ms);
+                        checkpointInterrupt(true);
+                        return;
                     }
                     int left = std::min(v.x1, v.x2);
                     int top  = std::min(v.y1, v.y2);
@@ -415,6 +449,7 @@ void Scheduler::Run() {
                                   + "% (need " + std::to_string(v.match_percent) + "%) after "
                                   + std::to_string(elapsed) + "ms -> "
                                   + (matched ? "MATCH branch" : "NO-MATCH branch"));
+                    checkpointInterrupt(true);
                     auto& branch = matched ? v.match_body : v.no_match_body;
                     if (branch && !branch->empty()) {
                         auto sig = runActivities(*branch, calledIds, false);
@@ -608,6 +643,10 @@ void Scheduler::Run() {
                 }
 
             }, *dataPtr);
+
+            // Pixel Range Check checkpoints itself before running its branches
+            if (!isControl && !std::holds_alternative<PixelRangeCheckActivity>(acts[i].data))
+                checkpointInterrupt(true);
 
             if (jumpTarget >= 0) { i = jumpTarget; jumpTarget = -1; }
             if (skipIteration) break;

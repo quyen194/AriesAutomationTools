@@ -1466,6 +1466,8 @@ void ActivityEditorWidget::RenderModal(Workflow& wf) {
         std::vector<Activity> draftOnly{m_draft};
         CollectVariableNames(draftOnly, m_varNames);
     }
+    if (std::find(m_varNames.begin(), m_varNames.end(), kInterruptedVar) == m_varNames.end())
+        m_varNames.push_back(kInterruptedVar);
     m_varNamesOther.clear();
     CollectVariableNames(wf.activities, m_varNamesOther, m_draft.id);
     if (m_nameExistingDraftId != m_draft.id) {

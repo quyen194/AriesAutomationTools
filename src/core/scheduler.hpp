@@ -4,6 +4,7 @@
 #include <thread>
 #include <functional>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -23,7 +24,10 @@ public:
     void Stop();    // blocks until thread exits
     bool IsRunning() const { return m_running.load(); }
 
-    void SetSuspended(bool s) { m_suspended.store(s); }
+    // Each false -> true transition bumps the interrupt epoch (feeds $_interrupted)
+    void SetSuspended(bool s) {
+        if (!m_suspended.exchange(s) && s) m_interruptEpoch.fetch_add(1);
+    }
     bool IsSuspended()  const { return m_suspended.load(); }
 
     // User-initiated pause (distinct from smart-detection suspend)
@@ -69,6 +73,7 @@ private:
     std::atomic<bool>    m_stopFlag{false};
     std::atomic<bool>    m_running{false};
     std::atomic<bool>    m_suspended{false};
+    std::atomic<uint64_t> m_interruptEpoch{0};
     std::atomic<bool>    m_userPaused{false};
     std::atomic<bool>    m_waitingRepeat{false};
     std::atomic<int>     m_currentIndex{-1};

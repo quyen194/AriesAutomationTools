@@ -110,6 +110,7 @@ Click **`+ Add`** in the Activities section to open the activity editor modal. T
 - **Variable binding:** the checkbox in front of a field switches it from a fixed value to a dropdown of the workflow's variables. For number fields the variable must hold an integer (e.g. `-12`); if it is not set or holds text, the workflow stops as **TERMINATED** at that step and the reason is written to the log. `increment` / `decrement` on a text variable is also an error.
 - For names that *define* a variable (Set Variable name, Loop iteration var, Get Mouse Position X / Y), the checkbox switches between typing a new name and picking an existing variable.
 - `if` / `switch`: with **Var** checked the operand is a variable; unchecked, the typed text is the value compared.
+- **Built-in `_interrupted`:** set to `1` after an action activity (wait, click, key, pixel check, ...) if smart detection interrupted the workflow during it or just before it, otherwise `0`. Control-flow activities (`if`, `switch`, `loop`, `jump`, `run_activity`, `set_variable`, `get_mouse_position`, `clear_variables`) don't overwrite it, so `If _interrupted == 1 -> Jump ...` right after a step checks whether that step was disturbed. A Pixel Range Check sets it before running its match / no-match branch.
 - The **Variables** button in the workflow header opens a table (#, name, value) of every variable; values update live while running and stay visible after the run ends.
 
 **Position mode**: `absolute` = screen coordinates. `relative` = coordinates within the target window's client area. New position-based activities default to `relative` when the workflow has a target window. When picking in `relative` mode the target window must be open; picked screen points are converted to client-area offsets automatically.
@@ -205,7 +206,7 @@ Examples:
 
 ### 7. Smart Detection
 
-When **Smart detection** is enabled, all running workflows pause automatically when the tool detects real user input (mouse/keyboard activity). They resume after the configured **Idle ms** period has elapsed with no input. A suspended workflow shows an `[!]` INTERRUPTED badge.
+When **Smart detection** is enabled, all running workflows pause automatically when the tool detects real user input (mouse/keyboard activity). They resume after the configured **Idle ms** period has elapsed with no input. A suspended workflow shows an `[!]` INTERRUPTED badge. To react to an interruption, test the built-in variable `_interrupted` with an `if` (see Variables).
 
 **Start delay (ms)** — when set, clicking Start does not launch the workflow immediately. Instead it enters a `[~]` STARTING state and waits until the system has been idle for at least that many milliseconds. Any user input during this window resets the wait. A `[Cancel]` button appears in place of Start while waiting.
 

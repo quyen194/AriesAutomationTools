@@ -8,6 +8,12 @@
 #include <type_traits>
 #include <algorithm>
 
+// ── Built-in variables ────────────────────────────────────────────────────────
+// Written by the scheduler itself. "_interrupted" is "1" when smart detection
+// suspended the workflow during (or just before) the last action activity,
+// "0" otherwise; control-flow activities don't overwrite it, so an If can test it.
+inline constexpr const char* kInterruptedVar = "_interrupted";
+
 // ── Variable-bindable fields ──────────────────────────────────────────────────
 // Calls f(key, label, int&) or f(key, label, std::string&) for every field of the
 // activity that may be bound to a runtime variable via Activity::var_bind.
