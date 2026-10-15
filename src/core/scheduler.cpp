@@ -253,6 +253,11 @@ void Scheduler::Run() {
         return true;
     };
 
+    // Target id of a Jump not yet resolved; non-empty while unwinding out of
+    // nested blocks toward the list that contains the target
+    std::string pendingJump;
+    std::vector<const std::vector<Activity>*> listStack;  // lists being run, outermost first
+
     // Recursive activity runner.
     // updateIndex=true → updates m_currentIndex per item (top-level call only).
     std::function<FlowSignal(const std::vector<Activity>&,
@@ -263,7 +268,8 @@ void Scheduler::Run() {
                         std::unordered_set<std::string>& calledIds,
                         bool updateIndex) -> FlowSignal {
         bool skipIteration = false;
-        int  jumpTarget    = -1;  // set by JumpActivity; applied after std::visit
+        listStack.push_back(&acts);
+        struct ListPop { decltype(listStack)& s; ~ListPop() { s.pop_back(); } } listPop{listStack};
 
         for (int i = 0; i < (int)acts.size() && !IsStopped(); ++i) {
             if (!acts[i].enabled) {
@@ -454,6 +460,7 @@ void Scheduler::Run() {
                     if (branch && !branch->empty()) {
                         auto sig = runActivities(*branch, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
+                        if (!pendingJump.empty()) return;  // jumping out of this block
                     }
                     SleepInterruptible(v.delay_ms);
 
@@ -527,6 +534,7 @@ void Scheduler::Run() {
                     }
                     if (!found)
                         Logger::Debug(wfName, "  run_activity target [" + v.activity_id + "] not found or disabled");
+                    if (!pendingJump.empty()) return;  // jumping out of the called activity
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, SetVariableActivity>) {
@@ -572,6 +580,7 @@ void Scheduler::Run() {
                             setVar(v.iter_var, std::to_string(iter));
                         auto sig = runActivities(*v.body, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
+                        if (!pendingJump.empty()) return;  // jumping out of this block
                         // SkipIter → skip this loop body iteration, continue outer loop
                         ++iter;
                     }
@@ -586,6 +595,7 @@ void Scheduler::Run() {
                     if (branch && !branch->empty()) {
                         auto sig = runActivities(*branch, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
+                        if (!pendingJump.empty()) return;  // jumping out of this block
                     }
                     SleepInterruptible(v.delay_ms);
 
@@ -597,6 +607,7 @@ void Scheduler::Run() {
                             Logger::Debug(wfName, "  switch value \"" + val + "\" -> case \"" + sc.value + "\"");
                             auto sig = runActivities(*sc.body, calledIds, false);
                             if (sig == FlowSignal::Stop) { skipIteration = true; return; }
+                            if (!pendingJump.empty()) return;  // jumping out of this block
                             matched = true; break;
                         }
                     }
@@ -605,21 +616,22 @@ void Scheduler::Run() {
                     if (!matched && v.default_body && !v.default_body->empty()) {
                         auto sig = runActivities(*v.default_body, calledIds, false);
                         if (sig == FlowSignal::Stop) { skipIteration = true; return; }
+                        if (!pendingJump.empty()) return;  // jumping out of this block
                     }
                     SleepInterruptible(v.delay_ms);
 
                 } else if constexpr (std::is_same_v<T, JumpActivity>) {
                     SleepInterruptible(v.delay_ms);
-                    for (int t = 0; t < (int)acts.size(); ++t) {
-                        if (acts[t].id == v.target_id) {
-                            jumpTarget = t - 1; // -1 because the for loop does ++i
-                            break;
-                        }
-                    }
-                    if (jumpTarget >= 0)
-                        Logger::Debug(wfName, "  jump to activity #" + std::to_string(jumpTarget + 2));
+                    // Resolved after std::visit: in this list, else in an enclosing one
+                    bool reachable = false;
+                    for (auto* list : listStack)
+                        for (auto& a : *list)
+                            if (a.id == v.target_id) reachable = true;
+                    if (reachable)
+                        pendingJump = v.target_id;
                     else
-                        Logger::Debug(wfName, "  jump target [" + v.target_id + "] not found in this list");
+                        Logger::Debug(wfName, "  jump target [" + v.target_id + "] is not in this list "
+                                      "or an enclosing one - ignored");
 
                 } else if constexpr (std::is_same_v<T, GetMousePositionActivity>) {
                     if (!g_input) return;
@@ -648,7 +660,18 @@ void Scheduler::Run() {
             if (!isControl && !std::holds_alternative<PixelRangeCheckActivity>(acts[i].data))
                 checkpointInterrupt(true);
 
-            if (jumpTarget >= 0) { i = jumpTarget; jumpTarget = -1; }
+            // Pending jump: continue at the target if it is in this list,
+            // otherwise unwind to the enclosing list and look there
+            if (!pendingJump.empty()) {
+                int t = 0;
+                while (t < (int)acts.size() && acts[t].id != pendingJump) ++t;
+                if (t == (int)acts.size()) break;
+                Logger::Debug(wfName, "  jump to activity #" + std::to_string(t + 1)
+                              + " [" + pendingJump + "]");
+                pendingJump.clear();
+                i = t - 1;  // -1 because the for loop does ++i
+                continue;
+            }
             if (skipIteration) break;
         }
 
@@ -669,6 +692,7 @@ void Scheduler::Run() {
         Logger::Debug(wfName, "Iteration " + std::to_string(iteration) + " begin");
         auto iterStart = std::chrono::steady_clock::now();
         runActivities(m_workflow.activities, calledIds, true);
+        pendingJump.clear();  // only left over when stopped mid-jump
         Logger::Debug(wfName, "Iteration " + std::to_string(iteration) + " end ("
                       + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - iterStart).count()) + "ms)");
